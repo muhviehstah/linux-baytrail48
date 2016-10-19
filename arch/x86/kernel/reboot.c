@@ -586,6 +586,7 @@ static void native_machine_emergency_restart(void)
 				attempt = 1;
 				reboot_type = BOOT_ACPI;
 			} else {
+				reboot_type = BOOT_TRIPLE;
 				reboot_type = BOOT_EFI;
 			}
 			break;
@@ -599,7 +600,7 @@ static void native_machine_emergency_restart(void)
 			machine_real_restart(MRR_BIOS);
 
 			/* We're probably dead after this, but... */
-			reboot_type = BOOT_CF9_SAFE;
+			reboot_type = BOOT_TRIPLE;
 			break;
 
 		case BOOT_CF9_FORCE:
