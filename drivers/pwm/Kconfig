@@ -240,7 +240,11 @@ config PWM_LPC32XX
 	  will be called pwm-lpc32xx.
 
 config PWM_LPSS
-	tristate
+	tristate "Intel LPSS PWM support"
+	depends on ACPI
+	help
+	  Generic PWM framework driver for Intel Low Power Subsystem PWM
+	  controller.
 
 config PWM_LPSS_PCI
 	tristate "Intel LPSS PWM PCI driver"
