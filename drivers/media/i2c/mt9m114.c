@@ -55,25 +55,25 @@ static int mt9m114_t_hflip(struct v4l2_subdev *sd, int value);
 static int mt9m114_wait_state(struct i2c_client *client, int timeout);
 
 static const struct sensor_format {
-         enum media_bus_format mbus_code;
+         enum v4l2_mbus_pixelcode mbus_code;
  } mt9m114_formats[] = {
 	 {
-                 .mbus_code      = MEDIA_BUS_FMT_FIXED,
+                 .mbus_code      = V4L2_MBUS_FMT_FIXED,
          },
 	 {
                  .mbus_code      = 0x8003,
          },
          {
-                 .mbus_code      = MEDIA_BUS_FMT_UYVY8_1X16,
+                 .mbus_code      = V4L2_MBUS_FMT_UYVY8_1X16,
          },
          {
-                 .mbus_code      = MEDIA_BUS_FMT_UYVY8_2X8,
+                 .mbus_code      = V4L2_MBUS_FMT_UYVY8_2X8,
          },
          {
-                 .mbus_code      = MEDIA_BUS_FMT_RGB565_2X8_LE,
+                 .mbus_code      = V4L2_MBUS_FMT_RGB565_2X8_LE,
          },
          {
-        		 .mbus_code		 = MEDIA_BUS_FMT_SBGGR10_1X10,
+        		 .mbus_code		 = V4L2_MBUS_FMT_SBGGR10_1X10,
          },
 
  };
@@ -877,17 +877,17 @@ static int mt9m114_set_mbus_fmt(struct v4l2_subdev *sd,
 
         switch (fmt->code)
 	{
-	  case MEDIA_BUS_FMT_FIXED:
+	  case V4L2_MBUS_FMT_FIXED:
 	  case 0x8003:
-	  case MEDIA_BUS_FMT_UYVY8_1X16:
-	  case MEDIA_BUS_FMT_UYVY8_2X8:
+	  case V4L2_MBUS_FMT_UYVY8_1X16:
+	  case V4L2_MBUS_FMT_UYVY8_2X8:
 		colour_fmt = 0x0010;
                 break;
 
-	  case MEDIA_BUS_FMT_RGB565_2X8_LE:
+	  case V4L2_MBUS_FMT_RGB565_2X8_LE:
                  colour_fmt = 0x0100;
               break;
-	  case MEDIA_BUS_FMT_SGRBG10_1X10:
+	  case V4L2_MBUS_FMT_SGRBG10_1X10:
 	  		  	 colour_fmt = 0x0210;
 	  		  break;
 	  default:
@@ -1403,7 +1403,7 @@ static int mt9m114_enum_mbus_code(struct v4l2_subdev *sd,
 {
 	if (code->index >= MAX_FMTS)
 		return -EINVAL;
-	code->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	code->code = V4L2_MBUS_FMT_SGRBG10_1X10;
 
 	return 0;
 }

@@ -45,7 +45,7 @@ extern const struct atomisp_format_bridge atomisp_output_fmts[];
 const struct atomisp_format_bridge *atomisp_get_format_bridge(
 	unsigned int pixelformat);
 const struct atomisp_format_bridge *atomisp_get_format_bridge_from_mbus(
-	enum media_bus_format mbus_code);
+	enum v4l2_mbus_pixelcode mbus_code);
 
 int atomisp_alloc_css_stat_bufs(struct atomisp_sub_device *isp_subdev);
 

@@ -100,7 +100,7 @@ void atomisp_setup_flash(struct atomisp_sub_device *isp_subdev);
 irqreturn_t atomisp_isr(int irq, void *dev);
 irqreturn_t atomisp_isr_thread(int irq, void *isp_ptr);
 const struct atomisp_format_bridge *get_atomisp_format_bridge_from_mbus(
-	enum media_bus_format mbus_code);
+	enum v4l2_mbus_pixelcode mbus_code);
 int atomisp_is_mbuscode_raw(uint32_t code);
 int atomisp_get_frame_pgnr(const struct ia_css_frame *frame, u32 *p_pgnr);
 unsigned int atomisp_try_mipi_frame_buffer_size(struct atomisp_sub_device *isp_subdev, unsigned int width, unsigned int height, unsigned int pixelformat);
@@ -357,7 +357,7 @@ extern const struct atomisp_format_bridge atomisp_output_fmts[];
 const struct atomisp_format_bridge *atomisp_get_format_bridge(
         unsigned int pixelformat);
 const struct atomisp_format_bridge *atomisp_get_format_bridge_from_mbus(
-        enum media_bus_format mbus_code);
+        enum v4l2_mbus_pixelcode mbus_code);
 int atomisp_enum_fmt_cap(struct file *file, void *fh,
         struct v4l2_fmtdesc *f);
 #endif /* __ATOMISP_CMD_H__ */

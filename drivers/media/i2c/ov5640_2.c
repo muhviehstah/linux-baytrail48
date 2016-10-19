@@ -1365,7 +1365,7 @@ static struct ov5640_2_res_struct *ov5640_2_to_res(u32 w, u32 h, u32 code)
 	int  index;
 
 	if(code == 0x8003)
-		code = MEDIA_BUS_FMT_UYVY8_1X16;
+		code = V4L2_MBUS_FMT_UYVY8_1X16;
 
 	for (index = 0; index < N_RES; index++) {
 		if (ov5640_2_res[index].width == w &&
@@ -2087,7 +2087,7 @@ static int ov5640_2_enum_mbus_code(struct v4l2_subdev *sd,
 {
 	if (code->index)
 		return -EINVAL;
-	code->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	code->code = V4L2_MBUS_FMT_SGRBG10_1X10;
 
 	return 0;
 }

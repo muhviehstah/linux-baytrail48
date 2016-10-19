@@ -131,7 +131,7 @@ static int file_input_enum_frameintervals(struct v4l2_subdev *sd,
 }
 
 static int file_input_enum_mbus_fmt(struct v4l2_subdev *sd, unsigned int index,
-				enum media_bus_format *code)
+				enum v4l2_mbus_pixelcode *code)
 {
 	/*to fake*/
 	return 0;

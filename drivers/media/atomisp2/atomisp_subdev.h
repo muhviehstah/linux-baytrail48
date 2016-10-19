@@ -60,7 +60,7 @@ enum atomisp_pipe_type {
 };
 
 struct atomisp_in_fmt_conv {
-	enum media_bus_format code;
+	enum v4l2_mbus_pixelcode code;
 	enum ia_css_stream_format in_sh_fmt;
 	enum ia_css_bayer_order bayer_order;
 };
@@ -282,7 +282,7 @@ struct atomisp_sub_device {
 extern const struct atomisp_in_fmt_conv atomisp_in_fmt_conv[];
 
 const struct atomisp_in_fmt_conv *atomisp_find_in_fmt_conv(
-	enum media_bus_format code);
+	enum v4l2_mbus_pixelcode code);
 
 /* Get pointer to appropriate format */
 struct v4l2_mbus_framefmt

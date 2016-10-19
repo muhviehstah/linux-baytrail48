@@ -24,17 +24,17 @@
 #include "atomisp_internal.h"
 
 static const unsigned int csi2_input_fmts[] = {
-	MEDIA_BUS_FMT_SGRBG10_1X10,
-	MEDIA_BUS_FMT_SRGGB10_1X10,
-	MEDIA_BUS_FMT_SBGGR10_1X10,
-	MEDIA_BUS_FMT_SGBRG10_1X10,
+	V4L2_MBUS_FMT_SGRBG10_1X10,
+	V4L2_MBUS_FMT_SRGGB10_1X10,
+	V4L2_MBUS_FMT_SBGGR10_1X10,
+	V4L2_MBUS_FMT_SGBRG10_1X10,
 };
 
 static const unsigned int csi2_output_fmts[] = {
-	MEDIA_BUS_FMT_SGRBG10_1X10,
-	MEDIA_BUS_FMT_SRGGB10_1X10,
-	MEDIA_BUS_FMT_SBGGR10_1X10,
-	MEDIA_BUS_FMT_SGBRG10_1X10,
+	V4L2_MBUS_FMT_SGRBG10_1X10,
+	V4L2_MBUS_FMT_SRGGB10_1X10,
+	V4L2_MBUS_FMT_SBGGR10_1X10,
+	V4L2_MBUS_FMT_SGBRG10_1X10,
 };
 
 
@@ -52,18 +52,18 @@ __csi2_get_format(struct atomisp_mipi_csi2_device *csi2,
 		return &csi2->formats[pad];
 }
 
-static enum media_bus_format
-isp_video_uncompressed_code(enum media_bus_format code)
+static enum v4l2_mbus_pixelcode
+isp_video_uncompressed_code(enum v4l2_mbus_pixelcode code)
 {
 	switch (code) {
-	case MEDIA_BUS_FMT_SBGGR10_DPCM8_1X8:
-		return MEDIA_BUS_FMT_SBGGR10_1X10;
-	case MEDIA_BUS_FMT_SGRBG10_DPCM8_1X8:
-		return MEDIA_BUS_FMT_SGRBG10_1X10;
-	case MEDIA_BUS_FMT_SRGGB10_DPCM8_1X8:
-		return MEDIA_BUS_FMT_SRGGB10_1X10;
-	case MEDIA_BUS_FMT_SGBRG10_DPCM8_1X8:
-		return MEDIA_BUS_FMT_SGBRG10_1X10;
+	case V4L2_MBUS_FMT_SBGGR10_DPCM8_1X8:
+		return V4L2_MBUS_FMT_SBGGR10_1X10;
+	case V4L2_MBUS_FMT_SGRBG10_DPCM8_1X8:
+		return V4L2_MBUS_FMT_SGRBG10_1X10;
+	case V4L2_MBUS_FMT_SRGGB10_DPCM8_1X8:
+		return V4L2_MBUS_FMT_SRGGB10_1X10;
+	case V4L2_MBUS_FMT_SGBRG10_DPCM8_1X8:
+		return V4L2_MBUS_FMT_SGBRG10_1X10;
 	default:
 		return code;
 	}
@@ -76,7 +76,7 @@ csi2_try_format(struct atomisp_mipi_csi2_device *csi2,
 	struct v4l2_mbus_framefmt *fmt,
 	enum v4l2_subdev_format_whence which)
 {
-	enum media_bus_format pixelcode;
+	enum v4l2_mbus_pixelcode pixelcode;
 	struct v4l2_mbus_framefmt *format;
 	unsigned int i;
 
@@ -90,7 +90,7 @@ csi2_try_format(struct atomisp_mipi_csi2_device *csi2,
 
 		/* If not found, use SGRBG10 as default */
 		if (i >= ARRAY_SIZE(csi2_input_fmts))
-			fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+			fmt->code = V4L2_MBUS_FMT_SBGGR10_1X10;
 
 		fmt->width = clamp_t(u32, fmt->width, 1, 4608);
 		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
@@ -326,8 +326,8 @@ static int mipi_csi2_init_entities(struct atomisp_mipi_csi2_device *csi2,
 	if (ret < 0)
 		return ret;
 
-	csi2->formats[CSI2_PAD_SINK].code = MEDIA_BUS_FMT_SBGGR10_1X10;
-	csi2->formats[CSI2_PAD_SOURCE].code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	csi2->formats[CSI2_PAD_SINK].code = V4L2_MBUS_FMT_SBGGR10_1X10;
+	csi2->formats[CSI2_PAD_SOURCE].code = V4L2_MBUS_FMT_SBGGR10_1X10;
 
 	return 0;
 }
