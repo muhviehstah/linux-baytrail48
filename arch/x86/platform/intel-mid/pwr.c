@@ -354,7 +354,11 @@ static int mid_pwr_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	return 0;
 }
 
+#ifndef --ignore-whitespace
 static int mid_set_initial_state(struct mid_pwr *pwr)
+#else
+static int mid_set_initial_state(struct mid_pwr *pwr, const u32 *states)
+#endif
 {
 	unsigned int i, j;
 	int ret;
@@ -379,10 +383,17 @@ static int mid_set_initial_state(struct mid_pwr *pwr)
 	 * NOTE: The actual device mapping is provided by a platform at run
 	 * time using vendor capability of PCI configuration space.
 	 */
+#ifndef --ignore-whitespace
 	mid_pwr_set_state(pwr, 0, 0xffffffff);
 	mid_pwr_set_state(pwr, 1, 0xffffffff);
 	mid_pwr_set_state(pwr, 2, 0xffffffff);
 	mid_pwr_set_state(pwr, 3, 0xffffffff);
+#else
+	mid_pwr_set_state(pwr, 0, states[0]);
+	mid_pwr_set_state(pwr, 1, states[1]);
+	mid_pwr_set_state(pwr, 2, states[2]);
+	mid_pwr_set_state(pwr, 3, states[3]);
+#endif
 
 	/* Send command to SCU */
 	ret = mid_pwr_wait_for_cmd(pwr, CMD_SET_CFG);
@@ -397,13 +408,53 @@ static int mid_set_initial_state(struct mid_pwr *pwr)
 	return 0;
 }
 
+#ifndef --ignore-whitespace
 static const struct mid_pwr_device_info mid_info = {
 	.set_initial_state = mid_set_initial_state,
+#else
+static int pnw_set_initial_state(struct mid_pwr *pwr)
+{
+	/* On Penwell SRAM must stay powered on */
+	const u32 states[] = {
+		0xf00fffff,		/* PM_SSC(0) */
+		0xffffffff,		/* PM_SSC(1) */
+		0xffffffff,		/* PM_SSC(2) */
+		0xffffffff,		/* PM_SSC(3) */
+	};
+	return mid_set_initial_state(pwr, states);
+}
+
+static int tng_set_initial_state(struct mid_pwr *pwr)
+{
+	const u32 states[] = {
+		0xffffffff,		/* PM_SSC(0) */
+		0xffffffff,		/* PM_SSC(1) */
+		0xffffffff,		/* PM_SSC(2) */
+		0xffffffff,		/* PM_SSC(3) */
+	};
+	return mid_set_initial_state(pwr, states);
+}
+
+static const struct mid_pwr_device_info pnw_info = {
+	.set_initial_state = pnw_set_initial_state,
 };
 
+static const struct mid_pwr_device_info tng_info = {
+	.set_initial_state = tng_set_initial_state,
+#endif
+};
+
+#ifdef --ignore-whitespace
+/* This table should be in sync with the one in drivers/pci/pci-mid.c */
+#endif
 static const struct pci_device_id mid_pwr_pci_ids[] = {
+#ifndef --ignore-whitespace
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_PENWELL), (kernel_ulong_t)&mid_info },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_TANGIER), (kernel_ulong_t)&mid_info },
+#else
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_PENWELL), (kernel_ulong_t)&pnw_info },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_TANGIER), (kernel_ulong_t)&tng_info },
+#endif
 	{}
 };
 

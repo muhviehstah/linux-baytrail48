@@ -190,7 +190,11 @@ int ima_appraise_measurement(enum ima_hooks func,
 {
 	static const char op[] = "appraise_data";
 	char *cause = "unknown";
+#ifndef --ignore-whitespace
 	struct dentry *dentry = file->f_path.dentry;
+#else
+	struct dentry *dentry = file_dentry(file);
+#endif
 	struct inode *inode = d_backing_inode(dentry);
 	enum integrity_status status = INTEGRITY_UNKNOWN;
 	int rc = xattr_len, hash_start = 0;
@@ -295,7 +299,11 @@ out:
  */
 void ima_update_xattr(struct integrity_iint_cache *iint, struct file *file)
 {
+#ifndef --ignore-whitespace
 	struct dentry *dentry = file->f_path.dentry;
+#else
+	struct dentry *dentry = file_dentry(file);
+#endif
 	int rc = 0;
 
 	/* do not collect and update hash for digital signatures */

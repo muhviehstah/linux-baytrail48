@@ -348,7 +348,12 @@ static int dwc3_send_clear_stall_ep_cmd(struct dwc3_ep *dep)
 	 * IN transfers due to a mishandled error condition. Synopsys
 	 * STAR 9000614252.
 	 */
+#ifndef --ignore-whitespace
 	if (dep->direction && (dwc->revision >= DWC3_REVISION_260A))
+#else
+	if (dep->direction && (dwc->revision >= DWC3_REVISION_260A) &&
+	    (dwc->gadget.speed >= USB_SPEED_SUPER))
+#endif
 		cmd |= DWC3_DEPCMD_CLEARPENDIN;
 
 	memset(&params, 0, sizeof(params));

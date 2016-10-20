@@ -1,6 +1,10 @@
 VERSION = 4
 PATCHLEVEL = 8
+#ifndef --ignore-whitespace
 SUBLEVEL = 1
+#else
+SUBLEVEL = 2
+#endif
 EXTRAVERSION =
 NAME = Psychotic Stoned Sheep
 

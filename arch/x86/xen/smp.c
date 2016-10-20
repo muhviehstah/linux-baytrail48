@@ -87,6 +87,14 @@ static void cpu_bringup(void)
 	cpu_data(cpu).x86_max_cores = 1;
 	set_cpu_sibling_map(cpu);
 
+#ifdef --ignore-whitespace
+	/*
+	 * identify_cpu() may have set logical_pkg_id to -1 due
+	 * to incorrect phys_proc_id. Let's re-comupte it.
+	 */
+	topology_update_package_map(apic->cpu_present_to_apicid(cpu), cpu);
+
+#endif
 	xen_setup_cpu_clockevents();
 
 	notify_cpu_starting(cpu);

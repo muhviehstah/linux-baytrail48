@@ -348,7 +348,11 @@ int __init sanitize_e820_map(struct e820entry *biosmap, int max_nr_map,
 		 * continue building up new bios map based on this
 		 * information
 		 */
+#ifndef --ignore-whitespace
 		if (current_type != last_type || current_type == E820_PRAM) {
+#else
+		if (current_type != last_type) {
+#endif
 			if (last_type != 0)	 {
 				new_bios[new_bios_entry].size =
 					change_point[chgidx]->addr - last_addr;
@@ -754,7 +758,11 @@ u64 __init early_reserve_e820(u64 size, u64 align)
 /*
  * Find the highest page frame number we have available
  */
+#ifndef --ignore-whitespace
 static unsigned long __init e820_end_pfn(unsigned long limit_pfn)
+#else
+static unsigned long __init e820_end_pfn(unsigned long limit_pfn, unsigned type)
+#endif
 {
 	int i;
 	unsigned long last_pfn = 0;
@@ -765,11 +773,15 @@ static unsigned long __init e820_end_pfn(unsigned long limit_pfn)
 		unsigned long start_pfn;
 		unsigned long end_pfn;
 
+#ifndef --ignore-whitespace
 		/*
 		 * Persistent memory is accounted as ram for purposes of
 		 * establishing max_pfn and mem_map.
 		 */
 		if (ei->type != E820_RAM && ei->type != E820_PRAM)
+#else
+		if (ei->type != type)
+#endif
 			continue;
 
 		start_pfn = ei->addr >> PAGE_SHIFT;
@@ -794,12 +806,20 @@ static unsigned long __init e820_end_pfn(unsigned long limit_pfn)
 }
 unsigned long __init e820_end_of_ram_pfn(void)
 {
+#ifndef --ignore-whitespace
 	return e820_end_pfn(MAX_ARCH_PFN);
+#else
+	return e820_end_pfn(MAX_ARCH_PFN, E820_RAM);
+#endif
 }
 
 unsigned long __init e820_end_of_low_ram_pfn(void)
 {
+#ifndef --ignore-whitespace
 	return e820_end_pfn(1UL << (32-PAGE_SHIFT));
+#else
+	return e820_end_pfn(1UL << (32 - PAGE_SHIFT), E820_RAM);
+#endif
 }
 
 static void early_panic(char *msg)

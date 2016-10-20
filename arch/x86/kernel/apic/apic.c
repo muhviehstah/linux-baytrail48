@@ -64,6 +64,10 @@ unsigned disabled_cpus;
 unsigned int boot_cpu_physical_apicid = -1U;
 EXPORT_SYMBOL_GPL(boot_cpu_physical_apicid);
 
+#ifdef --ignore-whitespace
+u8 boot_cpu_apic_version;
+
+#endif
 /*
  * The highest APIC ID seen during enumeration.
  */
@@ -1816,8 +1820,12 @@ void __init init_apic_mappings(void)
 		 * since smp_sanity_check is prepared for such a case
 		 * and disable smp mode
 		 */
+#ifndef --ignore-whitespace
 		apic_version[new_apicid] =
 			 GET_APIC_VERSION(apic_read(APIC_LVR));
+#else
+		boot_cpu_apic_version = GET_APIC_VERSION(apic_read(APIC_LVR));
+#endif
 	}
 }
 
@@ -1832,13 +1840,19 @@ void __init register_lapic_address(unsigned long address)
 	}
 	if (boot_cpu_physical_apicid == -1U) {
 		boot_cpu_physical_apicid  = read_apic_id();
+#ifndef --ignore-whitespace
 		apic_version[boot_cpu_physical_apicid] =
 			 GET_APIC_VERSION(apic_read(APIC_LVR));
+#else
+		boot_cpu_apic_version = GET_APIC_VERSION(apic_read(APIC_LVR));
+#endif
 	}
 }
 
+#ifndef --ignore-whitespace
 int apic_version[MAX_LOCAL_APIC];
 
+#endif
 /*
  * Local APIC interrupts
  */
@@ -2130,11 +2144,21 @@ int generic_processor_info(int apicid, int version)
 			   cpu, apicid);
 		version = 0x10;
 	}
+#ifndef --ignore-whitespace
 	apic_version[apicid] = version;
+#endif
 
+#ifndef --ignore-whitespace
 	if (version != apic_version[boot_cpu_physical_apicid]) {
+#else
+	if (version != boot_cpu_apic_version) {
+#endif
 		pr_warning("BIOS bug: APIC version mismatch, boot CPU: %x, CPU %d: version %x\n",
+#ifndef --ignore-whitespace
 			apic_version[boot_cpu_physical_apicid], cpu, version);
+#else
+			boot_cpu_apic_version, cpu, version);
+#endif
 	}
 
 	physid_set(apicid, phys_cpu_present_map);
@@ -2277,7 +2301,11 @@ int __init APIC_init_uniprocessor(void)
 	 * Complain if the BIOS pretends there is one.
 	 */
 	if (!boot_cpu_has(X86_FEATURE_APIC) &&
+#ifndef --ignore-whitespace
 	    APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])) {
+#else
+	    APIC_INTEGRATED(boot_cpu_apic_version)) {
+#endif
 		pr_err("BIOS bug, local APIC 0x%x not detected!...\n",
 			boot_cpu_physical_apicid);
 		return -1;

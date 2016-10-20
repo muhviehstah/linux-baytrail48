@@ -173,8 +173,13 @@ unsigned long kernel_stack_pointer(struct pt_regs *regs)
 		return sp;
 
 	prev_esp = (u32 *)(context);
+#ifndef --ignore-whitespace
 	if (prev_esp)
 		return (unsigned long)prev_esp;
+#else
+	if (*prev_esp)
+		return (unsigned long)*prev_esp;
+#endif
 
 	return (unsigned long)regs;
 }

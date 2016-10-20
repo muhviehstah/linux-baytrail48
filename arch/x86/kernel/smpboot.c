@@ -690,7 +690,11 @@ wakeup_secondary_cpu_via_nmi(int apicid, unsigned long start_eip)
 	 * Give the other CPU some time to accept the IPI.
 	 */
 	udelay(200);
+#ifndef --ignore-whitespace
 	if (APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])) {
+#else
+	if (APIC_INTEGRATED(boot_cpu_apic_version)) {
+#endif
 		maxlvt = lapic_get_maxlvt();
 		if (maxlvt > 3)			/* Due to the Pentium erratum 3AP.  */
 			apic_write(APIC_ESR, 0);
@@ -717,7 +721,11 @@ wakeup_secondary_cpu_via_init(int phys_apicid, unsigned long start_eip)
 	/*
 	 * Be paranoid about clearing APIC errors.
 	 */
+#ifndef --ignore-whitespace
 	if (APIC_INTEGRATED(apic_version[phys_apicid])) {
+#else
+	if (APIC_INTEGRATED(boot_cpu_apic_version)) {
+#endif
 		if (maxlvt > 3)		/* Due to the Pentium erratum 3AP.  */
 			apic_write(APIC_ESR, 0);
 		apic_read(APIC_ESR);
@@ -756,7 +764,11 @@ wakeup_secondary_cpu_via_init(int phys_apicid, unsigned long start_eip)
 	 * Determine this based on the APIC version.
 	 * If we don't have an integrated APIC, don't send the STARTUP IPIs.
 	 */
+#ifndef --ignore-whitespace
 	if (APIC_INTEGRATED(apic_version[phys_apicid]))
+#else
+	if (APIC_INTEGRATED(boot_cpu_apic_version))
+#endif
 		num_starts = 2;
 	else
 		num_starts = 0;
@@ -994,7 +1006,11 @@ static int do_boot_cpu(int apicid, int cpu, struct task_struct *idle)
 		/*
 		 * Be paranoid about clearing APIC errors.
 		*/
+#ifndef --ignore-whitespace
 		if (APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid])) {
+#else
+		if (APIC_INTEGRATED(boot_cpu_apic_version)) {
+#endif
 			apic_write(APIC_ESR, 0);
 			apic_read(APIC_ESR);
 		}
@@ -1249,7 +1265,11 @@ static int __init smp_sanity_check(unsigned max_cpus)
 	/*
 	 * If we couldn't find a local APIC, then get out of here now!
 	 */
+#ifndef --ignore-whitespace
 	if (APIC_INTEGRATED(apic_version[boot_cpu_physical_apicid]) &&
+#else
+	if (APIC_INTEGRATED(boot_cpu_apic_version) &&
+#endif
 	    !boot_cpu_has(X86_FEATURE_APIC)) {
 		if (!disable_apic) {
 			pr_err("BIOS bug, local APIC #%d not detected!...\n",
@@ -1406,9 +1426,27 @@ __init void prefill_possible_map(void)
 {
 	int i, possible;
 
+#ifndef --ignore-whitespace
 	/* no processor from mptable or madt */
 	if (!num_processors)
 		num_processors = 1;
+#else
+	/* No boot processor was found in mptable or ACPI MADT */
+	if (!num_processors) {
+		int apicid = boot_cpu_physical_apicid;
+		int cpu = hard_smp_processor_id();
+
+		pr_warn("Boot CPU (id %d) not listed by BIOS\n", cpu);
+
+		/* Make sure boot cpu is enumerated */
+		if (apic->cpu_present_to_apicid(0) == BAD_APICID &&
+		    apic->apic_id_valid(apicid))
+			generic_processor_info(apicid, boot_cpu_apic_version);
+
+		if (!num_processors)
+			num_processors = 1;
+	}
+#endif
 
 	i = setup_max_cpus ?: 1;
 	if (setup_possible_cpus == -1) {

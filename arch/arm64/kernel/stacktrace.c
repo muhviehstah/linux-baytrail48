@@ -43,6 +43,11 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 	unsigned long fp = frame->fp;
 	unsigned long irq_stack_ptr;
 
+#ifdef --ignore-whitespace
+	if (!tsk)
+		tsk = current;
+
+#endif
 	/*
 	 * Switching between stacks is valid when tracing current and in
 	 * non-preemptible context.
@@ -67,7 +72,11 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 	frame->pc = READ_ONCE_NOCHECK(*(unsigned long *)(fp + 8));
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
+#ifndef --ignore-whitespace
 	if (tsk && tsk->ret_stack &&
+#else
+	if (tsk->ret_stack &&
+#endif
 			(frame->pc == (unsigned long)return_to_handler)) {
 		/*
 		 * This is a case where function graph tracer has

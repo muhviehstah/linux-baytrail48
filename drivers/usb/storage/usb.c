@@ -1070,17 +1070,26 @@ int usb_stor_probe2(struct us_data *us)
 	result = usb_stor_acquire_resources(us);
 	if (result)
 		goto BadDevice;
+#ifdef --ignore-whitespace
+	usb_autopm_get_interface_no_resume(us->pusb_intf);
+#endif
 	snprintf(us->scsi_name, sizeof(us->scsi_name), "usb-storage %s",
 					dev_name(&us->pusb_intf->dev));
 	result = scsi_add_host(us_to_host(us), dev);
 	if (result) {
 		dev_warn(dev,
 				"Unable to add the scsi host\n");
+#ifndef --ignore-whitespace
 		goto BadDevice;
+#else
+		goto HostAddErr;
+#endif
 	}
 
 	/* Submit the delayed_work for SCSI-device scanning */
+#ifndef --ignore-whitespace
 	usb_autopm_get_interface_no_resume(us->pusb_intf);
+#endif
 	set_bit(US_FLIDX_SCAN_PENDING, &us->dflags);
 
 	if (delay_use > 0)
@@ -1090,6 +1099,10 @@ int usb_stor_probe2(struct us_data *us)
 	return 0;
 
 	/* We come here if there are any problems */
+#ifdef --ignore-whitespace
+HostAddErr:
+	usb_autopm_put_interface_no_suspend(us->pusb_intf);
+#endif
 BadDevice:
 	usb_stor_dbg(us, "storage_probe() failed\n");
 	release_everything(us);

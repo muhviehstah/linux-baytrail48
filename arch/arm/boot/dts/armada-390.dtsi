@@ -47,6 +47,10 @@
 #include "armada-39x.dtsi"
 
 / {
+#ifdef --ignore-whitespace
+	compatible = "marvell,armada390";
+
+#endif
 	soc {
 		internal-regs {
 			pinctrl@18000 {
@@ -54,4 +58,7 @@
 				reg = <0x18000 0x20>;
 			};
 		};
+#ifdef --ignore-whitespace
+	};
+#endif
 };

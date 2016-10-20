@@ -60,8 +60,19 @@ static struct pci_platform_pm_ops mid_pci_platform_pm = {
 
 #define ICPU(model)	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, }
 
+#ifdef --ignore-whitespace
+/*
+ * This table should be in sync with the one in
+ * arch/x86/platform/intel-mid/pwr.c.
+ */
+#endif
 static const struct x86_cpu_id lpss_cpu_ids[] = {
+#ifndef --ignore-whitespace
 	ICPU(INTEL_FAM6_ATOM_MERRIFIELD1),
+#else
+	ICPU(INTEL_FAM6_ATOM_PENWELL),
+	ICPU(INTEL_FAM6_ATOM_MERRIFIELD),
+#endif
 	{}
 };
 

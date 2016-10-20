@@ -40,6 +40,9 @@
 #include <linux/power_supply.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
+#ifdef --ignore-whitespace
+#include <linux/spinlock.h>
+#endif
 #include <linux/usb/of.h>
 #include <linux/workqueue.h>
 
@@ -112,7 +115,11 @@ struct sun4i_usb_phy_data {
 	void __iomem *base;
 	const struct sun4i_usb_phy_cfg *cfg;
 	enum usb_dr_mode dr_mode;
+#ifndef --ignore-whitespace
 	struct mutex mutex;
+#else
+	spinlock_t reg_lock; /* guard access to phyctl reg */
+#endif
 	struct sun4i_usb_phy {
 		struct phy *phy;
 		void __iomem *pmu;
@@ -179,9 +186,16 @@ static void sun4i_usb_phy_write(struct sun4i_usb_phy *phy, u32 addr, u32 data,
 	struct sun4i_usb_phy_data *phy_data = to_sun4i_usb_phy_data(phy);
 	u32 temp, usbc_bit = BIT(phy->index * 2);
 	void __iomem *phyctl = phy_data->base + phy_data->cfg->phyctl_offset;
+#ifdef --ignore-whitespace
+	unsigned long flags;
+#endif
 	int i;
 
+#ifndef --ignore-whitespace
 	mutex_lock(&phy_data->mutex);
+#else
+	spin_lock_irqsave(&phy_data->reg_lock, flags);
+#endif
 
 	if (phy_data->cfg->type == sun8i_a33_phy) {
 		/* A33 needs us to set phyctl to 0 explicitly */
@@ -218,7 +232,12 @@ static void sun4i_usb_phy_write(struct sun4i_usb_phy *phy, u32 addr, u32 data,
 
 		data >>= 1;
 	}
+#ifndef --ignore-whitespace
 	mutex_unlock(&phy_data->mutex);
+#else
+
+	spin_unlock_irqrestore(&phy_data->reg_lock, flags);
+#endif
 }
 
 static void sun4i_usb_phy_passby(struct sun4i_usb_phy *phy, int enable)
@@ -577,7 +596,11 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
 	if (!data)
 		return -ENOMEM;
 
+#ifndef --ignore-whitespace
 	mutex_init(&data->mutex);
+#else
+	spin_lock_init(&data->reg_lock);
+#endif
 	INIT_DELAYED_WORK(&data->detect, sun4i_usb_phy0_id_vbus_det_scan);
 	dev_set_drvdata(dev, data);
 	data->cfg = of_device_get_match_data(dev);

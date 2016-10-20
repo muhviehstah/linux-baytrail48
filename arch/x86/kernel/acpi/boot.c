@@ -182,7 +182,11 @@ static int acpi_register_lapic(int id, u32 acpiid, u8 enabled)
 	}
 
 	if (boot_cpu_physical_apicid != -1U)
+#ifndef --ignore-whitespace
 		ver = apic_version[boot_cpu_physical_apicid];
+#else
+		ver = boot_cpu_apic_version;
+#endif
 
 	cpu = generic_processor_info(id, ver);
 	if (cpu >= 0)

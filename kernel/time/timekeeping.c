@@ -403,8 +403,16 @@ static __always_inline u64 __ktime_get_fast_ns(struct tk_fast *tkf)
 		tkr = tkf->base + (seq & 0x01);
 		now = ktime_to_ns(tkr->base);
 
+#ifndef --ignore-whitespace
 		now += clocksource_delta(tkr->read(tkr->clock),
 					 tkr->cycle_last, tkr->mask);
+#else
+		now += timekeeping_delta_to_ns(tkr,
+				clocksource_delta(
+					tkr->read(tkr->clock),
+					tkr->cycle_last,
+					tkr->mask));
+#endif
 	} while (read_seqcount_retry(&tkf->seq, seq));
 
 	return now;

@@ -121,6 +121,9 @@ static int __init arm_idle_init(void)
 		dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 		if (!dev) {
 			pr_err("Failed to allocate cpuidle device\n");
+#ifdef --ignore-whitespace
+			ret = -ENOMEM;
+#endif
 			goto out_fail;
 		}
 		dev->cpu = cpu;
