@@ -360,7 +360,6 @@ static struct attribute *default_hw_ctx_attrs[] = {
 	&blk_mq_hw_sysfs_cpus.attr,
 	&blk_mq_hw_sysfs_active.attr,
 	&blk_mq_hw_sysfs_poll.attr,
-	&blk_mq_hw_sysfs_stat.attr,
 	NULL,
 };
 

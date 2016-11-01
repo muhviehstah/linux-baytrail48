@@ -341,6 +341,8 @@ extern void init_idle_bootup_task(struct task_struct *idle);
 
 extern cpumask_var_t cpu_isolated_map;
 
+extern int runqueue_is_locked(int cpu);
+
 #if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ_COMMON)
 extern void nohz_balance_enter_idle(int cpu);
 extern void set_cpu_sd_state_idle(void);
@@ -1619,7 +1621,8 @@ struct task_struct {
 
 	cputime_t utime, stime, utimescaled, stimescaled;
 #ifdef CONFIG_SCHED_MUQSS
-	unsigned long utime_pc, stime_pc;
+	/* Unbanked cpu time */
+	unsigned long utime_ns, stime_ns;
 #endif
 	cputime_t gtime;
 	struct prev_cputime prev_cputime;
@@ -3433,7 +3436,7 @@ static inline unsigned int task_cpu(const struct task_struct *p)
 	return 0;
 }
 
-static inline void set_task_cpu(struct task_struct *p, int cpu)
+static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
 }
 

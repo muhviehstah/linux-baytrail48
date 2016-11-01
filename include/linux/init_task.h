@@ -157,6 +157,8 @@ extern struct task_group root_task_group;
 # define INIT_VTIME(tsk)
 #endif
 
+#define INIT_TASK_COMM "swapper"
+
 #ifdef CONFIG_RT_MUTEXES
 # define INIT_RT_MUTEXES(tsk)						\
 	.pi_waiters = RB_ROOT,						\

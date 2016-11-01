@@ -20,12 +20,18 @@ struct rq {
 
 	raw_spinlock_t lock;
 
-	/* Stored data about rq->curr to work outside grq lock */
+	/* Stored data about rq->curr to work outside rq lock */
 	u64 rq_deadline;
-	unsigned int rq_policy;
-	int rq_time_slice;
-	u64 rq_last_ran;
 	int rq_prio;
+
+	/* Best queued id for use outside lock */
+	u64 best_key;
+
+	unsigned long last_scheduler_tick; /* Last jiffy this RQ ticked */
+	unsigned long last_jiffy; /* Last jiffy this RQ updated rq clock */
+	u64 niffies; /* Last time this RQ updated rq clock */
+	u64 last_niffy; /* Last niffies as updated by local clock */
+	u64 last_jiffy_niffies; /* Niffies @ last_jiffy */
 
 	u64 load_update; /* When we last updated load */
 	unsigned long load_avg; /* Rolling load average */
@@ -34,14 +40,15 @@ struct rq {
 	int rq_smt_bias; /* Policy/nice level bias across smt siblings */
 #endif
 	/* Accurate timekeeping data */
-	u64 timekeep_clock;
-	unsigned long user_pc, nice_pc, irq_pc, softirq_pc, system_pc,
-		iowait_pc, idle_pc;
+	unsigned long user_ns, nice_ns, irq_ns, softirq_ns, system_ns,
+		iowait_ns, idle_ns;
 	atomic_t nr_iowait;
 
 	skiplist_node node;
 	skiplist *sl;
 #ifdef CONFIG_SMP
+	struct task_struct *preempt; /* Preempt triggered on this task */
+
 	int cpu;		/* cpu of this runqueue */
 	bool online;
 
@@ -50,8 +57,6 @@ struct rq {
 	int *cpu_locality; /* CPU relative cache distance */
 	struct rq **rq_order; /* RQs ordered by relative cache distance */
 
-	unsigned long last_jiffy; /* Last jiffy this RQ updated rq clock */
-	u64 niffies; /* Last time this RQ updated rq clock */
 #ifdef CONFIG_SCHED_SMT
 	cpumask_t thread_mask;
 	bool (*siblings_idle)(struct rq *rq);
@@ -75,7 +80,10 @@ struct rq {
 
 	u64 clock, old_clock, last_tick;
 	u64 clock_task;
-	bool dither;
+	int dither;
+
+	int iso_ticks;
+	bool iso_refractory;
 
 #ifdef CONFIG_SCHEDSTATS
 
@@ -96,6 +104,11 @@ struct rq {
 	unsigned int ttwu_count;
 	unsigned int ttwu_local;
 #endif /* CONFIG_SCHEDSTATS */
+
+#ifdef CONFIG_SMP
+	struct llist_head wake_list;
+#endif
+
 #ifdef CONFIG_CPU_IDLE
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state *idle_state;
@@ -118,6 +131,41 @@ DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #define this_rq()		this_cpu_ptr(&runqueues)
 #define raw_rq()		raw_cpu_ptr(&runqueues)
 #endif /* CONFIG_SMP */
+
+/*
+ * {de,en}queue flags:
+ *
+ * DEQUEUE_SLEEP  - task is no longer runnable
+ * ENQUEUE_WAKEUP - task just became runnable
+ *
+ * SAVE/RESTORE - an otherwise spurious dequeue/enqueue, done to ensure tasks
+ *                are in a known state which allows modification. Such pairs
+ *                should preserve as much state as possible.
+ *
+ * MOVE - paired with SAVE/RESTORE, explicitly does not preserve the location
+ *        in the runqueue.
+ *
+ * ENQUEUE_HEAD      - place at front of runqueue (tail if not specified)
+ * ENQUEUE_REPLENISH - CBS (replenish runtime and postpone deadline)
+ * ENQUEUE_MIGRATED  - the task was migrated during wakeup
+ *
+ */
+
+#define DEQUEUE_SLEEP		0x01
+#define DEQUEUE_SAVE		0x02 /* matches ENQUEUE_RESTORE */
+#define DEQUEUE_MOVE		0x04 /* matches ENQUEUE_MOVE */
+
+#define ENQUEUE_WAKEUP		0x01
+#define ENQUEUE_RESTORE		0x02
+#define ENQUEUE_MOVE		0x04
+
+#define ENQUEUE_HEAD		0x08
+#define ENQUEUE_REPLENISH	0x10
+#ifdef CONFIG_SMP
+#define ENQUEUE_MIGRATED	0x20
+#else
+#define ENQUEUE_MIGRATED	0x00
+#endif
 
 static inline u64 __rq_clock_broken(struct rq *rq)
 {
@@ -165,12 +213,11 @@ static inline void unregister_sched_domain_sysctl(void)
 }
 #endif
 
-static inline void sched_ttwu_pending(void) { }
-
 #ifdef CONFIG_SMP
-
+extern void sched_ttwu_pending(void);
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
-
+#else
+static inline void sched_ttwu_pending(void) { }
 #endif
 
 #ifdef CONFIG_CPU_IDLE
