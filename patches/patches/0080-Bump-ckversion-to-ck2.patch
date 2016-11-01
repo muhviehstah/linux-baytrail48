@@ -1,0 +1,27 @@
+From ff6475a59108fc282c2309ea51fa13d6b78965a7 Mon Sep 17 00:00:00 2001
+From: Con Kolivas <kernel@kolivas.org>
+Date: Fri, 21 Oct 2016 11:18:26 +1100
+Subject: [PATCH 80/80] Bump ckversion to -ck2
+
+---
+ Makefile | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 9e6e5fa..7c1f555 100644
+--- a/Makefile
++++ b/Makefile
+@@ -10,8 +10,8 @@ NAME = Psychotic Stoned Sheep
+ # Comments in this file are targeted only to the developer, do not
+ # expect to learn how to build the kernel reading this file.
+ 
+-CKVERSION = -ck1
+-CKNAME = BFS Powered
++CKVERSION = -ck2
++CKNAME = MuQSS Powered
+ EXTRAVERSION := $(EXTRAVERSION)$(CKVERSION)
+ 
+ # o Do not use make's built-in rules and variables
+-- 
+2.7.4
+

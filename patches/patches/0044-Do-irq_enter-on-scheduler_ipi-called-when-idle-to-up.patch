@@ -1,0 +1,30 @@
+From 402bc62bdfb361f7d1362715cee83855c3b527dc Mon Sep 17 00:00:00 2001
+From: Con Kolivas <kernel@kolivas.org>
+Date: Sun, 16 Oct 2016 09:25:25 +1100
+Subject: [PATCH 44/80] Do irq_enter on scheduler_ipi called when idle to
+ update xtime.
+
+---
+ kernel/sched/MuQSS.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/kernel/sched/MuQSS.c b/kernel/sched/MuQSS.c
+index d36fcb5..39cc843 100644
+--- a/kernel/sched/MuQSS.c
++++ b/kernel/sched/MuQSS.c
+@@ -1741,6 +1741,12 @@ void scheduler_ipi(void)
+ 	 * this IPI.
+ 	 */
+ 	preempt_fold_need_resched();
++
++	if (!idle_cpu(smp_processor_id()) || need_resched())
++		return;
++
++	irq_enter();
++	irq_exit();
+ }
+ 
+ static int valid_task_cpu(struct task_struct *p)
+-- 
+2.7.4
+

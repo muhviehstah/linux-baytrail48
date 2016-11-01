@@ -1,0 +1,30 @@
+From 3201c4e548cf1363c15eed9bb9633f5f0b1d21f1 Mon Sep 17 00:00:00 2001
+From: ckolivas <kernel@kolivas.org>
+Date: Mon, 10 Oct 2016 14:04:59 +1100
+Subject: [PATCH 15/80] Don't reinitialise deadline on wake up new task in case
+ runqueue has changed.
+
+---
+ kernel/sched/MuQSS.c | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/kernel/sched/MuQSS.c b/kernel/sched/MuQSS.c
+index e0c847d..2bb868be 100644
+--- a/kernel/sched/MuQSS.c
++++ b/kernel/sched/MuQSS.c
+@@ -2120,12 +2120,6 @@ void wake_up_new_task(struct task_struct *p)
+ 	rq_curr = rq->curr;
+ 
+ 	/*
+-	 * Reinit new task deadline as its creator deadline could have changed
+-	 * since call to dup_task_struct().
+-	 */
+-	p->deadline = rq->rq_deadline;
+-
+-	/*
+ 	 * Make sure we do not leak PI boosting priority to the child.
+ 	 */
+ 	p->prio = rq_curr->normal_prio;
+-- 
+2.7.4
+

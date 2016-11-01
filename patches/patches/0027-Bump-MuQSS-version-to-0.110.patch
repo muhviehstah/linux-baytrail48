@@ -1,0 +1,25 @@
+From 73e3f989bd46c7cf0547813525aa74603250a9c4 Mon Sep 17 00:00:00 2001
+From: Con Kolivas <kernel@kolivas.org>
+Date: Tue, 11 Oct 2016 18:09:37 +1100
+Subject: [PATCH 27/80] Bump MuQSS version to 0.110
+
+---
+ kernel/sched/MuQSS.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/sched/MuQSS.c b/kernel/sched/MuQSS.c
+index e4e83c7..f3ee97b 100644
+--- a/kernel/sched/MuQSS.c
++++ b/kernel/sched/MuQSS.c
+@@ -139,7 +139,7 @@
+ 
+ void print_scheduler_version(void)
+ {
+-	printk(KERN_INFO "MuQSS CPU scheduler v0.108 by Con Kolivas.\n");
++	printk(KERN_INFO "MuQSS CPU scheduler v0.110 by Con Kolivas.\n");
+ }
+ 
+ /*
+-- 
+2.7.4
+

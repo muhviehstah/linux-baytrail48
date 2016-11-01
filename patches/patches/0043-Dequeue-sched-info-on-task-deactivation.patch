@@ -1,0 +1,24 @@
+From 0709a96f1958f90641639d8deab2ddf7aea75f47 Mon Sep 17 00:00:00 2001
+From: Con Kolivas <kernel@kolivas.org>
+Date: Sat, 15 Oct 2016 14:19:15 +1100
+Subject: [PATCH 43/80] Dequeue sched info on task deactivation
+
+---
+ kernel/sched/MuQSS.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/kernel/sched/MuQSS.c b/kernel/sched/MuQSS.c
+index 7004393..d36fcb5 100644
+--- a/kernel/sched/MuQSS.c
++++ b/kernel/sched/MuQSS.c
+@@ -1275,6 +1275,7 @@ static inline void deactivate_task(struct task_struct *p, struct rq *rq)
+ 
+ 	p->on_rq = 0;
+ 	atomic_dec(&grq.nr_running);
++	sched_info_dequeued(rq, p);
+ }
+ 
+ #ifdef CONFIG_SMP
+-- 
+2.7.4
+

@@ -1,0 +1,30 @@
+From 7d2ed0ba0a48fabc8e4b51360345c53a3cee99c3 Mon Sep 17 00:00:00 2001
+From: Con Kolivas <kernel@kolivas.org>
+Date: Tue, 11 Oct 2016 18:07:03 +1100
+Subject: [PATCH 26/80] Revert unnecessary moving of preempt_enable.
+
+---
+ kernel/smpboot.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/smpboot.c b/kernel/smpboot.c
+index fc0d8270..13bc43d 100644
+--- a/kernel/smpboot.c
++++ b/kernel/smpboot.c
+@@ -122,12 +122,12 @@ static int smpboot_thread_fn(void *data)
+ 
+ 		if (kthread_should_park()) {
+ 			__set_current_state(TASK_RUNNING);
++			preempt_enable();
+ 			if (ht->park && td->status == HP_THREAD_ACTIVE) {
+ 				BUG_ON(td->cpu != smp_processor_id());
+ 				ht->park(td->cpu);
+ 				td->status = HP_THREAD_PARKED;
+ 			}
+-			preempt_enable();
+ 			kthread_parkme();
+ 			/* We might have been woken for stop */
+ 			continue;
+-- 
+2.7.4
+

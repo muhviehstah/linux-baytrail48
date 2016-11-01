@@ -1,0 +1,48 @@
+From 659a4a858297dd4ccab05b83eaccfc4b28f39b2f Mon Sep 17 00:00:00 2001
+From: Con Kolivas <kernel@kolivas.org>
+Date: Sun, 9 Oct 2016 17:48:38 +1100
+Subject: [PATCH 12/80] muqss108-001-check_affinity_switch
+
+---
+ kernel/sched/MuQSS.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/sched/MuQSS.c b/kernel/sched/MuQSS.c
+index 4346276..38d1cee 100644
+--- a/kernel/sched/MuQSS.c
++++ b/kernel/sched/MuQSS.c
+@@ -1714,7 +1714,7 @@ static inline int select_best_cpu(struct task_struct *p)
+ 
+ 		if (!other_rq->online)
+ 			continue;
+-		if (other_rq != rq && needs_other_cpu(p, other_rq->cpu))
++		if (needs_other_cpu(p, other_rq->cpu))
+ 			continue;
+ 		entries = rq_load(other_rq);
+ 		if (entries >= idlest)
+@@ -5707,7 +5707,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
+ 	if (cpumask_test_cpu(task_cpu(p), new_mask))
+ 		goto out;
+ 
+-	if (task_running(rq, p)) {
++	if (task_running(rq, p) || p->state == TASK_WAKING) {
+ 		/* Task is running on the wrong cpu now, reschedule it. */
+ 		if (rq == this_rq()) {
+ 			set_tsk_need_resched(p);
+@@ -5718,9 +5718,12 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
+ 		int dest_cpu = cpumask_any_and(cpu_valid_mask, new_mask);
+ 		struct rq *dest_rq = cpu_rq(dest_cpu);
+ 
++		/* Switch rq locks here */
+ 		lock_second_rq(rq, dest_rq);
+ 		set_task_cpu(p, dest_cpu);
+-		rq_unlock(dest_rq);
++		rq_unlock(rq);
++
++		rq = dest_rq;
+ 	}
+ out:
+ 	if (queued && !cpumask_subset(new_mask, &old_mask))
+-- 
+2.7.4
+
