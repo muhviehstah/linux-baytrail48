@@ -1,9 +1,10 @@
 #include <linux/sched.h>
 #include <linux/cpuidle.h>
+#include <linux/skip_list.h>
 #include <linux/stop_machine.h>
 
-#ifndef BFS_SCHED_H
-#define BFS_SCHED_H
+#ifndef MUQSS_SCHED_H
+#define MUQSS_SCHED_H
 
 /*
  * This is the main, per-CPU runqueue data structure.
@@ -13,8 +14,7 @@ struct rq {
 	struct task_struct *curr, *idle, *stop;
 	struct mm_struct *prev_mm;
 
-	/* Pointer to grq spinlock */
-	raw_spinlock_t *grq_lock;
+	raw_spinlock_t lock;
 
 	/* Stored data about rq->curr to work outside grq lock */
 	u64 rq_deadline;
@@ -22,7 +22,7 @@ struct rq {
 	int rq_time_slice;
 	u64 rq_last_ran;
 	int rq_prio;
-	int soft_affined; /* Running or queued tasks with this set as their rq */
+
 	u64 load_update; /* When we last updated load */
 	unsigned long load_avg; /* Rolling load average */
 #ifdef CONFIG_SMT_NICE
@@ -35,6 +35,8 @@ struct rq {
 		iowait_pc, idle_pc;
 	atomic_t nr_iowait;
 
+	skiplist_node node;
+	skiplist *sl;
 #ifdef CONFIG_SMP
 	int cpu;		/* cpu of this runqueue */
 	bool online;
@@ -43,6 +45,9 @@ struct rq {
 	struct sched_domain *sd;
 	int *cpu_locality; /* CPU relative cache distance */
 	struct rq **rq_order; /* RQs ordered by relative cache distance */
+
+	unsigned long last_jiffy; /* Last jiffy this RQ updated rq clock */
+	u64 niffies; /* Last time this RQ updated rq clock */
 #ifdef CONFIG_SCHED_SMT
 	cpumask_t thread_mask;
 	bool (*siblings_idle)(struct rq *rq);
@@ -53,7 +58,6 @@ struct rq {
 	bool (*cache_idle)(struct rq *rq);
 	/* See if all cache siblings are idle */
 #endif /* CONFIG_SCHED_MC */
-	u64 last_niffy; /* Last time this RQ updated grq.niffies */
 #endif /* CONFIG_SMP */
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
@@ -118,13 +122,13 @@ static inline u64 __rq_clock_broken(struct rq *rq)
 
 static inline u64 rq_clock(struct rq *rq)
 {
-	lockdep_assert_held(rq->grq_lock);
+	lockdep_assert_held(&rq->lock);
 	return rq->clock;
 }
 
 static inline u64 rq_clock_task(struct rq *rq)
 {
-	lockdep_assert_held(rq->grq_lock);
+	lockdep_assert_held(&rq->lock);
 	return rq->clock_task;
 }
 
@@ -221,4 +225,4 @@ static inline void cpufreq_trigger(u64 time, unsigned long util)
 #define arch_scale_freq_invariant()	(false)
 #endif
 
-#endif /* BFS_SCHED_H */
+#endif /* MUQSS_SCHED_H */
