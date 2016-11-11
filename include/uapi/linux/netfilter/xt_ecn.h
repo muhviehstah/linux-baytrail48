@@ -10,7 +10,7 @@
 #define _XT_ECN_H
 
 #include <linux/types.h>
-#include <linux/netfilter/xt_dscp.h>
+#include <uapi/linux/netfilter/xt_dscp.h>
 
 #define XT_ECN_IP_MASK	(~XT_DSCP_MASK)
 
