@@ -586,7 +586,6 @@ static void native_machine_emergency_restart(void)
 				attempt = 1;
 				reboot_type = BOOT_ACPI;
 			} else {
-				reboot_type = BOOT_TRIPLE;
 				reboot_type = BOOT_EFI;
 			}
 			break;
@@ -600,7 +599,7 @@ static void native_machine_emergency_restart(void)
 			machine_real_restart(MRR_BIOS);
 
 			/* We're probably dead after this, but... */
-			reboot_type = BOOT_TRIPLE;
+			reboot_type = BOOT_CF9_SAFE;
 			break;
 
 		case BOOT_CF9_FORCE:
@@ -702,13 +701,6 @@ static void native_machine_power_off(void)
 			machine_shutdown();
 		pm_power_off();
 	}
-
-#ifdef CONFIG_EFI
-	if (efi_enabled(EFI_RUNTIME_SERVICES))
-		efi.reset_system(EFI_RESET_SHUTDOWN,
-				 EFI_SUCCESS, 0, NULL);
-#endif
-
 	/* A fallback in case there is no PM info available */
 	tboot_shutdown(TB_SHUTDOWN_HALT);
 }

@@ -123,6 +123,7 @@
  */
 #define JIFFIES_TO_NS(TIME)	((TIME) * (1073741824 / HZ))
 #define JIFFY_NS		(1073741824 / HZ)
+#define JIFFY_US		(1048576 / HZ)
 #define NS_TO_JIFFIES(TIME)	((TIME) / JIFFY_NS)
 #define HALF_JIFFY_NS		(1073741824 / HZ / 2)
 #define HALF_JIFFY_US		(1048576 / HZ / 2)
@@ -130,12 +131,13 @@
 #define MS_TO_US(TIME)		((TIME) << 10)
 #define NS_TO_MS(TIME)		((TIME) >> 20)
 #define NS_TO_US(TIME)		((TIME) >> 10)
+#define US_TO_NS(TIME)		((TIME) << 10)
 
 #define RESCHED_US	(100) /* Reschedule if less than this many μs left */
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.116 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.135 by Con Kolivas.\n");
 }
 
 /*
@@ -171,6 +173,8 @@ static inline int timeslice(void)
 	return MS_TO_US(rr_interval);
 }
 
+static bool sched_smp_initialized __read_mostly;
+
 /*
  * The global runqueue data that all CPUs work off. Contains either atomic
  * variables and a cpu bitmap set atomically.
@@ -180,13 +184,11 @@ struct global_rq {
 	atomic_t nr_running ____cacheline_aligned_in_smp;
 	atomic_t nr_uninterruptible ____cacheline_aligned_in_smp;
 	atomic64_t nr_switches ____cacheline_aligned_in_smp;
-	atomic_t qnr ____cacheline_aligned_in_smp; /* queued not running */
 	cpumask_t cpu_idle_map ____cacheline_aligned_in_smp;
 #else
 	atomic_t nr_running ____cacheline_aligned;
 	atomic_t nr_uninterruptible ____cacheline_aligned;
 	atomic64_t nr_switches ____cacheline_aligned;
-	atomic_t qnr ____cacheline_aligned; /* queued not running */
 #endif
 };
 
@@ -750,6 +752,13 @@ static inline bool task_queued(struct task_struct *p)
 static void enqueue_task(struct rq *rq, struct task_struct *p, int flags);
 static inline void resched_if_idle(struct rq *rq);
 
+/* Dodgy workaround till we figure out where the softirqs are going */
+static inline void do_pending_softirq(struct rq *rq, struct task_struct *next)
+{
+	if (unlikely(next == rq->idle && local_softirq_pending() && !in_interrupt()))
+		do_softirq_own_stack();
+}
+
 static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 {
 #ifdef CONFIG_SMP
@@ -804,7 +813,11 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 		raw_spin_unlock(&prev->pi_lock);
 	}
 #endif
-	raw_spin_unlock_irq(&rq->lock);
+	rq_unlock(rq);
+
+	do_pending_softirq(rq, current);
+
+	local_irq_enable();
 }
 
 static inline bool deadline_before(u64 deadline, u64 time)
@@ -862,20 +875,24 @@ static inline bool rq_local(struct rq *rq);
  */
 static void update_load_avg(struct rq *rq)
 {
-	/* rq clock can go backwards so skip update if that happens */
-	if (likely(rq->clock > rq->load_update)) {
-		unsigned long us_interval = (rq->clock - rq->load_update) >> 10;
-		long load, curload = rq_load(rq);
+	unsigned long us_interval;
+	long load, curload;
 
-		load = rq->load_avg - (rq->load_avg * us_interval * 5 / 262144);
-		if (unlikely(load < 0))
-			load = 0;
-		load += curload * curload * SCHED_CAPACITY_SCALE * us_interval * 5 / 262144;
-		rq->load_avg = load;
-	} else
+	if (unlikely(rq->niffies <= rq->load_update))
 		return;
 
-	rq->load_update = rq->clock;
+	us_interval = NS_TO_US(rq->niffies - rq->load_update);
+	curload = rq_load(rq);
+	load = rq->load_avg - (rq->load_avg * us_interval * 5 / 262144);
+	if (unlikely(load < 0))
+		load = 0;
+	load += curload * curload * SCHED_CAPACITY_SCALE * us_interval * 5 / 262144;
+	/* If this CPU has all the load, make it ramp up quickly */
+	if (curload > load && curload >= atomic_read(&grq.nr_running))
+		load = curload;
+	rq->load_avg = load;
+
+	rq->load_update = rq->niffies;
 	if (likely(rq_local(rq)))
 		cpufreq_trigger(rq->niffies, rq->load_avg);
 }
@@ -993,26 +1010,6 @@ static inline int task_prio_ratio(struct task_struct *p)
 static inline int task_timeslice(struct task_struct *p)
 {
 	return (rr_interval * task_prio_ratio(p) / 128);
-}
-
-/*
- * qnr is the "queued but not running" count which is the total number of
- * tasks on the global runqueue list waiting for cpu time but not actually
- * currently running on a cpu.
- */
-static inline void inc_qnr(void)
-{
-	atomic_inc(&grq.qnr);
-}
-
-static inline void dec_qnr(void)
-{
-	atomic_dec(&grq.qnr);
-}
-
-static inline int queued_notrunning(void)
-{
-	return atomic_read(&grq.qnr);
 }
 
 #ifdef CONFIG_SMP
@@ -1382,7 +1379,6 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 	enqueue_task(rq, p, 0);
 	p->on_rq = TASK_ON_RQ_QUEUED;
 	atomic_inc(&grq.nr_running);
-	inc_qnr();
 }
 
 /*
@@ -1416,7 +1412,7 @@ void set_task_cpu(struct task_struct *p, unsigned int cpu)
 	WARN_ON_ONCE(debug_locks && !(lockdep_is_held(&p->pi_lock) ||
 				      lockdep_is_held(&task_rq(p)->lock)));
 #endif
-	if (p->wake_cpu == cpu)
+	if (task_cpu(p) == cpu)
 		return;
 	trace_sched_migrate_task(p, cpu);
 	perf_event_task_migrate(p);
@@ -1467,7 +1463,6 @@ static inline void take_task(struct rq *rq, int cpu, struct task_struct *p)
 		sched_info_queued(rq, p);
 	}
 	set_task_cpu(p, cpu);
-	dec_qnr();
 }
 
 /*
@@ -1480,7 +1475,6 @@ static inline void return_task(struct task_struct *p, struct rq *rq,
 	if (deactivate)
 		deactivate_task(p, rq);
 	else {
-		inc_qnr();
 #ifdef CONFIG_SMP
 		/*
 		 * set_task_cpu was called on the running task that doesn't
@@ -1831,8 +1825,6 @@ static int ttwu_remote(struct task_struct *p, int wake_flags)
 }
 
 #ifdef CONFIG_SMP
-static bool sched_smp_initialized __read_mostly;
-
 void sched_ttwu_pending(void)
 {
 	struct rq *rq = this_rq();
@@ -2347,6 +2339,16 @@ int sysctl_schedstats(struct ctl_table *table, int write,
 static inline void init_schedstats(void) {}
 #endif /* CONFIG_SCHEDSTATS */
 
+static void update_cpu_clock_switch(struct rq *rq, struct task_struct *p);
+
+static void account_task_cpu(struct rq *rq, struct task_struct *p)
+{
+	update_clocks(rq);
+	/* This isn't really a context switch but accounting is the same */
+	update_cpu_clock_switch(rq, p);
+	p->last_ran = rq->niffies;
+}
+
 /*
  * wake_up_new_task - wake up a newly created task for the first time.
  *
@@ -2372,7 +2374,6 @@ void wake_up_new_task(struct task_struct *p)
 	}
 
 	double_rq_lock(rq, new_rq);
-	update_clocks(rq);
 	rq_curr = rq->curr;
 
 	/*
@@ -2380,7 +2381,6 @@ void wake_up_new_task(struct task_struct *p)
 	 */
 	p->prio = rq_curr->normal_prio;
 
-	activate_task(p, rq);
 	trace_sched_wakeup_new(p);
 
 	/*
@@ -2391,17 +2391,17 @@ void wake_up_new_task(struct task_struct *p)
 	 * modified within schedule() so it is always equal to
 	 * current->deadline.
 	 */
+	account_task_cpu(rq, rq_curr);
 	p->last_ran = rq_curr->last_ran;
 	if (likely(rq_curr->policy != SCHED_FIFO)) {
 		rq_curr->time_slice /= 2;
-		if (unlikely(rq_curr->time_slice < RESCHED_US)) {
+		if (rq_curr->time_slice < RESCHED_US) {
 			/*
 			 * Forking task has run out of timeslice. Reschedule it and
 			 * start its child with a new time slice and deadline. The
 			 * child will end up running first because its deadline will
 			 * be slightly earlier.
 			 */
-			rq_curr->time_slice = 0;
 			__set_tsk_resched(rq_curr);
 			time_slice_expired(p, new_rq);
 			if (suitable_idle_cpus(p))
@@ -2424,6 +2424,7 @@ void wake_up_new_task(struct task_struct *p)
 		time_slice_expired(p, new_rq);
 		try_preempt(p, new_rq);
 	}
+	activate_task(p, new_rq);
 	double_rq_unlock(rq, new_rq);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 }
@@ -2558,7 +2559,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * past. prev == current is still correct but we need to recalculate this_rq
  * because prev may have moved to another CPU.
  */
-static struct rq *finish_task_switch(struct task_struct *prev)
+static void finish_task_switch(struct task_struct *prev)
 	__releases(rq->lock)
 {
 	struct rq *rq = this_rq();
@@ -2611,7 +2612,6 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 		kprobe_flush_task(prev);
 		put_task_struct(prev);
 	}
-	return rq;
 }
 
 /**
@@ -2619,10 +2619,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
  * @prev: the thread we just switched away from.
  */
 asmlinkage __visible void schedule_tail(struct task_struct *prev)
-	__releases(rq->lock)
 {
-	struct rq *rq;
-
 	/*
 	 * New tasks start with FORK_PREEMPT_COUNT, see there and
 	 * finish_task_switch() for details.
@@ -2632,7 +2629,7 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
 	 * PREEMPT_COUNT kernels).
 	 */
 
-	rq = finish_task_switch(prev);
+	finish_task_switch(prev);
 	preempt_enable();
 
 	if (current->set_child_tid)
@@ -2642,7 +2639,7 @@ asmlinkage __visible void schedule_tail(struct task_struct *prev)
 /*
  * context_switch - switch to the new MM and the new thread's register state.
  */
-static __always_inline struct rq *
+static __always_inline void
 context_switch(struct rq *rq, struct task_struct *prev,
 	       struct task_struct *next)
 {
@@ -2682,7 +2679,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	switch_to(prev, next, prev);
 	barrier();
 
-	return finish_task_switch(prev);
+	finish_task_switch(prev);
 }
 
 /*
@@ -2819,116 +2816,6 @@ DEFINE_PER_CPU(struct kernel_cpustat, kernel_cpustat);
 EXPORT_PER_CPU_SYMBOL(kstat);
 EXPORT_PER_CPU_SYMBOL(kernel_cpustat);
 
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-
-/*
- * There are no locks covering percpu hardirq/softirq time.
- * They are only modified in account_system_vtime, on corresponding CPU
- * with interrupts disabled. So, writes are safe.
- * They are read and saved off onto struct rq in update_rq_clock().
- * This may result in other CPU reading this CPU's irq time and can
- * race with irq/account_system_vtime on this CPU. We would either get old
- * or new value with a side effect of accounting a slice of irq time to wrong
- * task when irq is in progress while we read rq->clock. That is a worthy
- * compromise in place of having locks on each irq in account_system_time.
- */
-static DEFINE_PER_CPU(u64, cpu_hardirq_time);
-static DEFINE_PER_CPU(u64, cpu_softirq_time);
-
-static DEFINE_PER_CPU(u64, irq_start_time);
-static int sched_clock_irqtime;
-
-void enable_sched_clock_irqtime(void)
-{
-	sched_clock_irqtime = 1;
-}
-
-void disable_sched_clock_irqtime(void)
-{
-	sched_clock_irqtime = 0;
-}
-
-#ifndef CONFIG_64BIT
-static DEFINE_PER_CPU(seqcount_t, irq_time_seq);
-
-static inline void irq_time_write_begin(void)
-{
-	__this_cpu_inc(irq_time_seq.sequence);
-	smp_wmb();
-}
-
-static inline void irq_time_write_end(void)
-{
-	smp_wmb();
-	__this_cpu_inc(irq_time_seq.sequence);
-}
-
-static inline u64 irq_time_read(int cpu)
-{
-	u64 irq_time;
-	unsigned seq;
-
-	do {
-		seq = read_seqcount_begin(&per_cpu(irq_time_seq, cpu));
-		irq_time = per_cpu(cpu_softirq_time, cpu) +
-			   per_cpu(cpu_hardirq_time, cpu);
-	} while (read_seqcount_retry(&per_cpu(irq_time_seq, cpu), seq));
-
-	return irq_time;
-}
-#else /* CONFIG_64BIT */
-static inline void irq_time_write_begin(void)
-{
-}
-
-static inline void irq_time_write_end(void)
-{
-}
-
-static inline u64 irq_time_read(int cpu)
-{
-	return per_cpu(cpu_softirq_time, cpu) + per_cpu(cpu_hardirq_time, cpu);
-}
-#endif /* CONFIG_64BIT */
-
-/*
- * Called before incrementing preempt_count on {soft,}irq_enter
- * and before decrementing preempt_count on {soft,}irq_exit.
- */
-void irqtime_account_irq(struct task_struct *curr)
-{
-	unsigned long flags;
-	s64 delta;
-	int cpu;
-
-	if (!sched_clock_irqtime)
-		return;
-
-	local_irq_save(flags);
-
-	cpu = smp_processor_id();
-	delta = sched_clock_cpu(cpu) - __this_cpu_read(irq_start_time);
-	__this_cpu_add(irq_start_time, delta);
-
-	irq_time_write_begin();
-	/*
-	 * We do not account for softirq time from ksoftirqd here.
-	 * We want to continue accounting softirq time to ksoftirqd thread
-	 * in that case, so as not to confuse scheduler with a special task
-	 * that do not consume any time, but still wants to run.
-	 */
-	if (hardirq_count())
-		__this_cpu_add(cpu_hardirq_time, delta);
-	else if (in_serving_softirq() && curr != this_cpu_ksoftirqd())
-		__this_cpu_add(cpu_softirq_time, delta);
-
-	irq_time_write_end();
-	local_irq_restore(flags);
-}
-EXPORT_SYMBOL_GPL(irqtime_account_irq);
-
-#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
-
 #ifdef CONFIG_PARAVIRT
 static inline u64 steal_ticks(u64 steal)
 {
@@ -2989,89 +2876,6 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 #ifndef nsecs_to_cputime
 # define nsecs_to_cputime(__nsecs)	nsecs_to_jiffies(__nsecs)
 #endif
-
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-static void irqtime_account_hi_si(void)
-{
-	u64 *cpustat = kcpustat_this_cpu->cpustat;
-	u64 latest_ns;
-
-	latest_ns = nsecs_to_cputime64(this_cpu_read(cpu_hardirq_time));
-	if (latest_ns > cpustat[CPUTIME_IRQ])
-		cpustat[CPUTIME_IRQ] += (__force u64)cputime_one_jiffy;
-
-	latest_ns = nsecs_to_cputime64(this_cpu_read(cpu_softirq_time));
-	if (latest_ns > cpustat[CPUTIME_SOFTIRQ])
-		cpustat[CPUTIME_SOFTIRQ] += (__force u64)cputime_one_jiffy;
-}
-#else /* CONFIG_IRQ_TIME_ACCOUNTING */
-
-#define sched_clock_irqtime	(0)
-
-static inline void irqtime_account_hi_si(void)
-{
-}
-#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
-
-static __always_inline bool steal_account_process_tick(void)
-{
-#ifdef CONFIG_PARAVIRT
-	if (static_key_false(&paravirt_steal_enabled)) {
-		u64 steal;
-		cputime_t steal_ct;
-
-		steal = paravirt_steal_clock(smp_processor_id());
-		steal -= this_rq()->prev_steal_time;
-
-		/*
-		 * cputime_t may be less precise than nsecs (eg: if it's
-		 * based on jiffies). Lets cast the result to cputime
-		 * granularity and account the rest on the next rounds.
-		 */
-		steal_ct = nsecs_to_cputime(steal);
-		this_rq()->prev_steal_time += cputime_to_nsecs(steal_ct);
-
-		account_steal_time(steal_ct);
-		return steal_ct;
-	}
-#endif
-	return false;
-}
-
-/*
- * Accumulate raw cputime values of dead tasks (sig->[us]time) and live
- * tasks (sum on group iteration) belonging to @tsk's group.
- */
-void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
-{
-	struct signal_struct *sig = tsk->signal;
-	cputime_t utime, stime;
-	struct task_struct *t;
-	unsigned int seq, nextseq;
-	unsigned long flags;
-
-	rcu_read_lock();
-	/* Attempt a lockless read on the first round. */
-	nextseq = 0;
-	do {
-		seq = nextseq;
-		flags = read_seqbegin_or_lock_irqsave(&sig->stats_lock, &seq);
-		times->utime = sig->utime;
-		times->stime = sig->stime;
-		times->sum_exec_runtime = sig->sum_sched_runtime;
-
-		for_each_thread(tsk, t) {
-			task_cputime(t, &utime, &stime);
-			times->utime += utime;
-			times->stime += stime;
-			times->sum_exec_runtime += task_sched_runtime(t);
-		}
-		/* If lockless access failed, take the lock. */
-		nextseq = 1;
-	} while (need_seqretry(&sig->stats_lock, seq));
-	done_seqretry_irqrestore(&sig->stats_lock, seq, flags);
-	rcu_read_unlock();
-}
 
 /*
  * On each tick, add the number of nanoseconds to the unbanked variables and
@@ -3197,14 +3001,10 @@ static void pc_user_time(struct rq *rq, struct task_struct *p, unsigned long ns)
  * Bank in p->sched_time the ns elapsed since the last tick or switch.
  * CPU scheduler quota accounting is also performed here in microseconds.
  */
-static void
-update_cpu_clock_tick(struct rq *rq, struct task_struct *p)
+static void update_cpu_clock_tick(struct rq *rq, struct task_struct *p)
 {
 	s64 account_ns = rq->niffies - p->last_ran;
 	struct task_struct *idle = rq->idle;
-
-	if (steal_account_process_tick())
-		goto ts_account;
 
 	/* Accurate tick timekeeping */
 	if (user_mode(get_irq_regs()))
@@ -3214,10 +3014,6 @@ update_cpu_clock_tick(struct rq *rq, struct task_struct *p)
 	} else
 		pc_idle_time(rq, idle, account_ns);
 
-	if (sched_clock_irqtime)
-		irqtime_account_hi_si();
-
-ts_account:
 	/* time_slice accounting is done in usecs to avoid overflow on 32bit */
 	if (p->policy != SCHED_FIFO && p != idle)
 		p->time_slice -= NS_TO_US(account_ns);
@@ -3230,8 +3026,7 @@ ts_account:
  * Bank in p->sched_time the ns elapsed since the last tick or switch.
  * CPU scheduler quota accounting is also performed here in microseconds.
  */
-static void
-update_cpu_clock_switch(struct rq *rq, struct task_struct *p)
+static void update_cpu_clock_switch(struct rq *rq, struct task_struct *p)
 {
 	s64 account_ns = rq->niffies - p->last_ran;
 	struct task_struct *idle = rq->idle;
@@ -3305,133 +3100,86 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	return ns;
 }
 
-/* Compatibility crap */
-void account_user_time(struct task_struct *p, cputime_t cputime,
-		       cputime_t cputime_scaled)
+#ifdef CONFIG_HIGH_RES_TIMERS
+static inline int hrexpiry_enabled(struct rq *rq)
 {
-}
-
-void account_idle_time(cputime_t cputime)
-{
-}
-
-/*
- * Account guest cpu time to a process.
- * @p: the process that the cpu time gets accounted to
- * @cputime: the cpu time spent in virtual machine since the last update
- * @cputime_scaled: cputime scaled by cpu frequency
- */
-static void account_guest_time(struct task_struct *p, cputime_t cputime,
-			       cputime_t cputime_scaled)
-{
-	u64 *cpustat = kcpustat_this_cpu->cpustat;
-
-	/* Add guest time to process. */
-	p->utime += (__force u64)cputime;
-	p->utimescaled += (__force u64)cputime_scaled;
-	account_group_user_time(p, cputime);
-	p->gtime += (__force u64)cputime;
-
-	/* Add guest time to cpustat. */
-	if (task_nice(p) > 0) {
-		cpustat[CPUTIME_NICE] += (__force u64)cputime;
-		cpustat[CPUTIME_GUEST_NICE] += (__force u64)cputime;
-	} else {
-		cpustat[CPUTIME_USER] += (__force u64)cputime;
-		cpustat[CPUTIME_GUEST] += (__force u64)cputime;
-	}
+	if (unlikely(!cpu_active(cpu_of(rq)) || !sched_smp_initialized))
+		return 0;
+	return hrtimer_is_hres_active(&rq->hrexpiry_timer);
 }
 
 /*
- * Account system cpu time to a process and desired cpustat field
- * @p: the process that the cpu time gets accounted to
- * @cputime: the cpu time spent in kernel space since the last update
- * @cputime_scaled: cputime scaled by cpu frequency
- * @target_cputime64: pointer to cpustat field that has to be updated
+ * Use HR-timers to deliver accurate preemption points.
  */
-static inline
-void __account_system_time(struct task_struct *p, cputime_t cputime,
-			cputime_t cputime_scaled, cputime64_t *target_cputime64)
+static void hrexpiry_clear(struct rq *rq)
 {
-	/* Add system time to process. */
-	p->stime += (__force u64)cputime;
-	p->stimescaled += (__force u64)cputime_scaled;
-	account_group_system_time(p, cputime);
-
-	/* Add system time to cpustat. */
-	*target_cputime64 += (__force u64)cputime;
-
-	/* Account for system time used */
-	acct_update_integrals(p);
+	if (!hrexpiry_enabled(rq))
+		return;
+	if (hrtimer_active(&rq->hrexpiry_timer))
+		hrtimer_cancel(&rq->hrexpiry_timer);
 }
 
 /*
- * Account system cpu time to a process.
- * @p: the process that the cpu time gets accounted to
- * @hardirq_offset: the offset to subtract from hardirq_count()
- * @cputime: the cpu time spent in kernel space since the last update
- * @cputime_scaled: cputime scaled by cpu frequency
- * This is for guest only now.
+ * High-resolution time_slice expiry.
+ * Runs from hardirq context with interrupts disabled.
  */
-void account_system_time(struct task_struct *p, int hardirq_offset,
-			 cputime_t cputime, cputime_t cputime_scaled)
+static enum hrtimer_restart hrexpiry(struct hrtimer *timer)
 {
+	struct rq *rq = container_of(timer, struct rq, hrexpiry_timer);
+	struct task_struct *p;
 
-	if ((p->flags & PF_VCPU) && (irq_count() - hardirq_offset == 0))
-		account_guest_time(p, cputime, cputime_scaled);
+	/* This can happen during CPU hotplug / resume */
+	if (unlikely(cpu_of(rq) != smp_processor_id()))
+		goto out;
+
+	/*
+	 * We're doing this without the runqueue lock but this should always
+	 * be run on the local CPU. Time slice should run out in __schedule
+	 * but we set it to zero here in case niffies is slightly less.
+	 */
+	p = rq->curr;
+	p->time_slice = 0;
+	__set_tsk_resched(p);
+out:
+	return HRTIMER_NORESTART;
 }
 
 /*
- * Account for involuntary wait time.
- * @steal: the cpu time spent in involuntary wait
+ * Called to set the hrexpiry timer state.
+ *
+ * called with irqs disabled from the local CPU only
  */
-void account_steal_time(cputime_t cputime)
+static void hrexpiry_start(struct rq *rq, u64 delay)
 {
-	u64 *cpustat = kcpustat_this_cpu->cpustat;
+	if (!hrexpiry_enabled(rq))
+		return;
 
-	cpustat[CPUTIME_STEAL] += (__force u64)cputime;
+	hrtimer_start(&rq->hrexpiry_timer, ns_to_ktime(delay),
+		      HRTIMER_MODE_REL_PINNED);
 }
 
-/*
- * Account for idle time.
- * @cputime: the cpu time spent in idle wait
- */
-static void account_idle_times(cputime_t cputime)
+static void init_rq_hrexpiry(struct rq *rq)
 {
-	u64 *cpustat = kcpustat_this_cpu->cpustat;
-	struct rq *rq = this_rq();
-
-	if (atomic_read(&rq->nr_iowait) > 0)
-		cpustat[CPUTIME_IOWAIT] += (__force u64)cputime;
-	else
-		cpustat[CPUTIME_IDLE] += (__force u64)cputime;
+	hrtimer_init(&rq->hrexpiry_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	rq->hrexpiry_timer.function = hrexpiry;
 }
 
-#ifndef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
-
-void account_process_tick(struct task_struct *p, int user_tick)
+static inline int rq_dither(struct rq *rq)
+{
+	if (!hrexpiry_enabled(rq))
+		return HALF_JIFFY_US;
+	return 0;
+}
+#else /* CONFIG_HIGH_RES_TIMERS */
+static inline void init_rq_hrexpiry(struct rq *rq)
 {
 }
 
-/*
- * Account multiple ticks of steal time.
- * @p: the process from which the cpu time has been stolen
- * @ticks: number of stolen ticks
- */
-void account_steal_ticks(unsigned long ticks)
+static inline int rq_dither(struct rq *rq)
 {
-	account_steal_time(jiffies_to_cputime(ticks));
+	return HALF_JIFFY_US;
 }
-
-/*
- * Account multiple ticks of idle time.
- * @ticks: number of stolen ticks
- */
-void account_idle_ticks(unsigned long ticks)
-{
-	account_idle_times(jiffies_to_cputime(ticks));
-}
-#endif
+#endif /* CONFIG_HIGH_RES_TIMERS */
 
 /*
  * Functions to test for when SCHED_ISO tasks have used their allocated
@@ -3510,6 +3258,8 @@ static void task_running_tick(struct rq *rq)
 	 * allowed to run into the 2nd half of the next tick if they will
 	 * run out of time slice in the interim. Otherwise, if they have
 	 * less than RESCHED_US μs of time slice left they will be rescheduled.
+	 * Dither is used as a backup for when hrexpiry is disabled or high res
+	 * timers not configured in.
 	 */
 	if (p->time_slice - rq->dither >= RESCHED_US)
 		return;
@@ -3518,6 +3268,60 @@ out_resched:
 	__set_tsk_resched(p);
 	rq_unlock(rq);
 }
+
+#ifdef CONFIG_NO_HZ_FULL
+/*
+ * We can stop the timer tick any time highres timers are active since
+ * we rely entirely on highres timeouts for task expiry rescheduling.
+ */
+static void sched_stop_tick(struct rq *rq, int cpu)
+{
+	if (!hrexpiry_enabled(rq))
+		return;
+	if (!tick_nohz_full_enabled())
+		return;
+	if (!tick_nohz_full_cpu(cpu))
+		return;
+	tick_nohz_dep_clear_cpu(cpu, TICK_DEP_BIT_SCHED);
+}
+
+static inline void sched_start_tick(struct rq *rq, int cpu)
+{
+	tick_nohz_dep_set_cpu(cpu, TICK_DEP_BIT_SCHED);
+}
+
+/**
+ * scheduler_tick_max_deferment
+ *
+ * Keep at least one tick per second when a single
+ * active task is running.
+ *
+ * This makes sure that uptime continues to move forward, even
+ * with a very low granularity.
+ *
+ * Return: Maximum deferment in nanoseconds.
+ */
+u64 scheduler_tick_max_deferment(void)
+{
+	struct rq *rq = this_rq();
+	unsigned long next, now = READ_ONCE(jiffies);
+
+	next = rq->last_jiffy + HZ;
+
+	if (time_before_eq(next, now))
+		return 0;
+
+	return jiffies_to_nsecs(next - now);
+}
+#else
+static inline void sched_stop_tick(struct rq *rq, int cpu)
+{
+}
+
+static inline void sched_start_tick(struct rq *rq, int cpu)
+{
+}
+#endif
 
 /*
  * This function gets called by the timer code, with HZ frequency.
@@ -3539,6 +3343,7 @@ void scheduler_tick(void)
 	rq->last_scheduler_tick = rq->last_jiffy;
 	rq->last_tick = rq->clock;
 	perf_event_task_tick();
+	sched_stop_tick(rq, cpu);
 }
 
 #if defined(CONFIG_PREEMPT) && (defined(CONFIG_DEBUG_PREEMPT) || \
@@ -3694,6 +3499,12 @@ static inline struct task_struct
 		 * is locked so entries will always be accurate.
 		 */
 		if (!sched_interactive) {
+			/*
+			 * Don't reschedule balance across nodes unless the CPU
+			 * is idle.
+			 */
+			if (edt != idle && rq->cpu_locality[other_rq->cpu] > 3)
+				break;
 			if (entries <= best_entries)
 				continue;
 		} else if (!entries)
@@ -3718,8 +3529,8 @@ static inline struct task_struct
 		key = other_rq->node.next[0]->key;
 		/* Reevaluate key after locking */
 		if (unlikely(key >= best_key)) {
-			if (i)
-				unlock_rq(other_rq);
+			/* This will always be when rq != other_rq */
+			unlock_rq(other_rq);
 			continue;
 		}
 
@@ -3821,6 +3632,17 @@ static inline void schedule_debug(struct task_struct *prev)
  */
 static inline void set_rq_task(struct rq *rq, struct task_struct *p)
 {
+#ifdef CONFIG_HIGH_RES_TIMERS
+	if (p == rq->idle || p->policy == SCHED_FIFO)
+		hrexpiry_clear(rq);
+	else
+		hrexpiry_start(rq, US_TO_NS(p->time_slice));
+#endif /* CONFIG_HIGH_RES_TIMERS */
+	if (rq->clock - rq->last_tick > HALF_JIFFY_NS)
+		rq->dither = 0;
+	else
+		rq->dither = rq_dither(rq);
+
 	rq->rq_deadline = p->deadline;
 	rq->rq_prio = p->prio;
 #ifdef CONFIG_SMT_NICE
@@ -3857,9 +3679,6 @@ static void check_smt_siblings(struct rq *this_rq)
 static void wake_smt_siblings(struct rq *this_rq)
 {
 	int other_cpu;
-
-	if (!queued_notrunning())
-		return;
 
 	for_each_cpu(other_cpu, &this_rq->thread_mask) {
 		struct rq *rq;
@@ -3985,13 +3804,8 @@ static void __sched notrace __schedule(bool preempt)
 				struct task_struct *to_wakeup;
 
 				to_wakeup = wq_worker_sleeping(prev);
-				if (to_wakeup) {
-					/* This shouldn't happen, but does */
-					if (WARN_ONCE((to_wakeup == prev), "Waking up prev as worker\n"))
-						deactivate = false;
-					else
-						try_to_wake_up_local(to_wakeup);
-				}
+				if (to_wakeup)
+					try_to_wake_up_local(to_wakeup);
 			}
 		}
 		switch_count = &prev->nvcsw;
@@ -4005,10 +3819,6 @@ static void __sched notrace __schedule(bool preempt)
 	update_clocks(rq);
 	niffies = rq->niffies;
 	update_cpu_clock_switch(rq, prev);
-	if (rq->clock - rq->last_tick > HALF_JIFFY_NS)
-		rq->dither = 0;
-	else
-		rq->dither = HALF_JIFFY_US;
 
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
@@ -4018,19 +3828,12 @@ static void __sched notrace __schedule(bool preempt)
 		return_task(prev, rq, cpu, deactivate);
 	}
 
-	if (unlikely(!queued_notrunning())) {
-		next = idle;
-		schedstat_inc(rq, sched_goidle);
+	next = earliest_deadline_task(rq, cpu, idle);
+	if (likely(next->prio != PRIO_LIMIT))
+		clear_cpuidle_map(cpu);
+	else {
 		set_cpuidle_map(cpu);
 		update_load_avg(rq);
-	} else {
-		next = earliest_deadline_task(rq, cpu, idle);
-		if (likely(next->prio != PRIO_LIMIT))
-			clear_cpuidle_map(cpu);
-		else {
-			set_cpuidle_map(cpu);
-			update_load_avg(rq);
-		}
 	}
 
 	set_rq_task(rq, next);
@@ -4051,10 +3854,12 @@ static void __sched notrace __schedule(bool preempt)
 		++*switch_count;
 
 		trace_sched_switch(preempt, prev, next);
-		rq = context_switch(rq, prev, next); /* unlocks the rq */
+		context_switch(rq, prev, next); /* unlocks the rq */
 	} else {
 		check_siblings(rq);
-		rq_unlock_irq(rq);
+		rq_unlock(rq);
+		do_pending_softirq(rq, next);
+		local_irq_enable();
 	}
 }
 
@@ -5241,6 +5046,7 @@ SYSCALL_DEFINE0(sched_yield)
 
 	p = current;
 	rq = this_rq_lock();
+	time_slice_expired(p, rq);
 	schedstat_inc(task_rq(p), yld_count);
 
 	/*
@@ -5640,8 +5446,12 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
 	__do_set_cpus_allowed(p, new_mask);
 	if (needs_other_cpu(p, task_cpu(p))) {
+		struct rq *rq;
+
 		set_task_cpu(p, valid_task_cpu(p));
+		rq = __task_rq_lock(p);
 		resched_task(p);
+		__task_rq_unlock(rq);
 	}
 }
 
@@ -7473,6 +7283,8 @@ int sched_cpu_dying(unsigned int cpu)
 	}
 	bind_zero(cpu);
 	double_rq_unlock(rq, cpu_rq(0));
+	sched_start_tick(rq, cpu);
+	hrexpiry_clear(rq);
 	local_irq_restore(flags);
 
 	return 0;
@@ -7643,6 +7455,7 @@ void __init sched_init_smp(void)
 #else
 void __init sched_init_smp(void)
 {
+	sched_smp_initialized = true;
 }
 #endif /* CONFIG_SMP */
 
@@ -7696,7 +7509,6 @@ void __init sched_init(void)
 
 #ifdef CONFIG_SMP
 	init_defrootdomain();
-	atomic_set(&grq.qnr, 0);
 	cpumask_clear(&grq.cpu_idle_map);
 #else
 	uprq = &per_cpu(runqueues, 0);
@@ -7729,6 +7541,7 @@ void __init sched_init(void)
 		rq->cpu = i;
 		rq_attach_root(rq, &def_root_domain);
 #endif
+		init_rq_hrexpiry(rq);
 		atomic_set(&rq->nr_iowait, 0);
 	}
 
@@ -7935,199 +7748,6 @@ void set_curr_task(int cpu, struct task_struct *p)
 }
 
 #endif
-
-/*
- * Use precise platform statistics if available:
- */
-#ifdef CONFIG_VIRT_CPU_ACCOUNTING
-
-#ifndef __ARCH_HAS_VTIME_TASK_SWITCH
-void vtime_common_task_switch(struct task_struct *prev)
-{
-	if (is_idle_task(prev))
-		vtime_account_idle(prev);
-	else
-		vtime_account_system(prev);
-
-#ifdef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
-	vtime_account_user(prev);
-#endif
-	arch_vtime_task_switch(prev);
-}
-#endif
-
-#endif /* CONFIG_VIRT_CPU_ACCOUNTING */
-
-#ifdef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
-void task_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
-{
-	*ut = p->utime;
-	*st = p->stime;
-}
-EXPORT_SYMBOL_GPL(task_cputime_adjusted);
-
-void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
-{
-	struct task_cputime cputime;
-
-	thread_group_cputime(p, &cputime);
-
-	*ut = cputime.utime;
-	*st = cputime.stime;
-}
-
-void vtime_account_system_irqsafe(struct task_struct *tsk)
-{
-	unsigned long flags;
-
-	local_irq_save(flags);
-	vtime_account_system(tsk);
-	local_irq_restore(flags);
-}
-EXPORT_SYMBOL_GPL(vtime_account_system_irqsafe);
-
-/*
- * Archs that account the whole time spent in the idle task
- * (outside irq) as idle time can rely on this and just implement
- * vtime_account_system() and vtime_account_idle(). Archs that
- * have other meaning of the idle time (s390 only includes the
- * time spent by the CPU when it's in low power mode) must override
- * vtime_account().
- */
-#ifndef __ARCH_HAS_VTIME_ACCOUNT
-void vtime_account_irq_enter(struct task_struct *tsk)
-{
-	if (!in_interrupt() && is_idle_task(tsk))
-		vtime_account_idle(tsk);
-	else
-		vtime_account_system(tsk);
-}
-EXPORT_SYMBOL_GPL(vtime_account_irq_enter);
-#endif /* __ARCH_HAS_VTIME_ACCOUNT */
-
-#else /* CONFIG_VIRT_CPU_ACCOUNTING_NATIVE */
-/*
- * Perform (stime * rtime) / total, but avoid multiplication overflow by
- * losing precision when the numbers are big.
- */
-static cputime_t scale_stime(u64 stime, u64 rtime, u64 total)
-{
-	u64 scaled;
-
-	for (;;) {
-		/* Make sure "rtime" is the bigger of stime/rtime */
-		if (stime > rtime) {
-			u64 tmp = rtime; rtime = stime; stime = tmp;
-		}
-
-		/* Make sure 'total' fits in 32 bits */
-		if (total >> 32)
-			goto drop_precision;
-
-		/* Does rtime (and thus stime) fit in 32 bits? */
-		if (!(rtime >> 32))
-			break;
-
-		/* Can we just balance rtime/stime rather than dropping bits? */
-		if (stime >> 31)
-			goto drop_precision;
-
-		/* We can grow stime and shrink rtime and try to make them both fit */
-		stime <<= 1;
-		rtime >>= 1;
-		continue;
-
-drop_precision:
-		/* We drop from rtime, it has more bits than stime */
-		rtime >>= 1;
-		total >>= 1;
-	}
-
-	/*
-	 * Make sure gcc understands that this is a 32x32->64 multiply,
-	 * followed by a 64/32->64 divide.
-	 */
-	scaled = div_u64((u64) (u32) stime * (u64) (u32) rtime, (u32)total);
-	return (__force cputime_t) scaled;
-}
-
-/*
- * Adjust tick based cputime random precision against scheduler
- * runtime accounting.
- */
-static void cputime_adjust(struct task_cputime *curr,
-			   struct prev_cputime *prev,
-			   cputime_t *ut, cputime_t *st)
-{
-	cputime_t rtime, stime, utime, total;
-
-	stime = curr->stime;
-	total = stime + curr->utime;
-
-	/*
-	 * Tick based cputime accounting depend on random scheduling
-	 * timeslices of a task to be interrupted or not by the timer.
-	 * Depending on these circumstances, the number of these interrupts
-	 * may be over or under-optimistic, matching the real user and system
-	 * cputime with a variable precision.
-	 *
-	 * Fix this by scaling these tick based values against the total
-	 * runtime accounted by the CFS scheduler.
-	 */
-	rtime = nsecs_to_cputime(curr->sum_exec_runtime);
-
-	/*
-	 * Update userspace visible utime/stime values only if actual execution
-	 * time is bigger than already exported. Note that can happen, that we
-	 * provided bigger values due to scaling inaccuracy on big numbers.
-	 */
-	if (prev->stime + prev->utime >= rtime)
-		goto out;
-
-	if (total) {
-		stime = scale_stime((__force u64)stime,
-				    (__force u64)rtime, (__force u64)total);
-		utime = rtime - stime;
-	} else {
-		stime = rtime;
-		utime = 0;
-	}
-
-	/*
-	 * If the tick based count grows faster than the scheduler one,
-	 * the result of the scaling may go backward.
-	 * Let's enforce monotonicity.
-	 */
-	prev->stime = max(prev->stime, stime);
-	prev->utime = max(prev->utime, utime);
-
-out:
-	*ut = prev->utime;
-	*st = prev->stime;
-}
-
-void task_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
-{
-	struct task_cputime cputime = {
-		.sum_exec_runtime = tsk_seruntime(p),
-	};
-
-	task_cputime(p, &cputime.utime, &cputime.stime);
-	cputime_adjust(&cputime, &p->prev_cputime, ut, st);
-}
-EXPORT_SYMBOL_GPL(task_cputime_adjusted);
-
-/*
- * Must be called with siglock held.
- */
-void thread_group_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
-{
-	struct task_cputime cputime;
-
-	thread_group_cputime(p, &cputime);
-	cputime_adjust(&cputime, &p->signal->prev_cputime, ut, st);
-}
-#endif /* CONFIG_VIRT_CPU_ACCOUNTING_NATIVE */
 
 void init_idle_bootup_task(struct task_struct *idle)
 {}

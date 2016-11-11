@@ -1,7 +1,9 @@
 #include <linux/sched.h>
 #include <linux/cpuidle.h>
+#include <linux/interrupt.h>
 #include <linux/skip_list.h>
 #include <linux/stop_machine.h>
+#include "cpuacct.h"
 
 #ifndef MUQSS_SCHED_H
 #define MUQSS_SCHED_H
@@ -84,6 +86,10 @@ struct rq {
 
 	int iso_ticks;
 	bool iso_refractory;
+
+#ifdef CONFIG_HIGH_RES_TIMERS
+	struct hrtimer hrexpiry_timer;
+#endif
 
 #ifdef CONFIG_SCHEDSTATS
 
@@ -244,6 +250,55 @@ static inline struct cpuidle_state *idle_get_state(struct rq *rq)
 }
 #endif
 
+#ifdef CONFIG_IRQ_TIME_ACCOUNTING
+
+DECLARE_PER_CPU(u64, cpu_hardirq_time);
+DECLARE_PER_CPU(u64, cpu_softirq_time);
+
+#ifndef CONFIG_64BIT
+DECLARE_PER_CPU(seqcount_t, irq_time_seq);
+
+static inline void irq_time_write_begin(void)
+{
+	__this_cpu_inc(irq_time_seq.sequence);
+	smp_wmb();
+}
+
+static inline void irq_time_write_end(void)
+{
+	smp_wmb();
+	__this_cpu_inc(irq_time_seq.sequence);
+}
+
+static inline u64 irq_time_read(int cpu)
+{
+	u64 irq_time;
+	unsigned seq;
+
+	do {
+		seq = read_seqcount_begin(&per_cpu(irq_time_seq, cpu));
+		irq_time = per_cpu(cpu_softirq_time, cpu) +
+			   per_cpu(cpu_hardirq_time, cpu);
+	} while (read_seqcount_retry(&per_cpu(irq_time_seq, cpu), seq));
+
+	return irq_time;
+}
+#else /* CONFIG_64BIT */
+static inline void irq_time_write_begin(void)
+{
+}
+
+static inline void irq_time_write_end(void)
+{
+}
+
+static inline u64 irq_time_read(int cpu)
+{
+	return per_cpu(cpu_softirq_time, cpu) + per_cpu(cpu_hardirq_time, cpu);
+}
+#endif /* CONFIG_64BIT */
+#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
+
 #ifdef CONFIG_CPU_FREQ
 DECLARE_PER_CPU(struct update_util_data *, cpufreq_update_util_data);
 
@@ -270,5 +325,19 @@ static inline void cpufreq_trigger(u64 time, unsigned long util)
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
+
+/*
+ * This should only be called when current == rq->idle. Dodgy workaround for
+ * when softirqs are pending and we are in the idle loop. Setting current to
+ * resched will kick us out of the idle loop and the softirqs will be serviced
+ * on our next pass through schedule().
+ */
+static inline bool softirq_pending(int cpu)
+{
+	if (likely(!local_softirq_pending()))
+		return false;
+	set_tsk_need_resched(current);
+	return true;
+}
 
 #endif /* MUQSS_SCHED_H */
