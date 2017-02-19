@@ -24,6 +24,8 @@
 #include <linux/device.h>
 #include <linux/dmi.h>
 #include <linux/slab.h>
+#include <asm/cpu_device_id.h>
+#include <asm/platform_sst_audio.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
@@ -31,6 +33,7 @@
 #include "../../codecs/rt5640.h"
 #include "../atom/sst-atom-controls.h"
 #include "../common/sst-acpi.h"
+#include "../common/sst-dsp.h"
 
 enum {
 	BYT_RT5640_DMIC1_MAP,
@@ -40,6 +43,11 @@ enum {
 
 #define BYT_RT5640_MAP(quirk)	((quirk) & 0xff)
 #define BYT_RT5640_DMIC_EN	BIT(16)
+#define BYT_RT5640_MONO_SPEAKER BIT(17)
+#define BYT_RT5640_DIFF_MIC     BIT(18) /* defaut is single-ended */
+#define BYT_RT5640_SSP2_AIF2     BIT(19) /* default is using AIF1  */
+#define BYT_RT5640_SSP0_AIF1     BIT(20)
+#define BYT_RT5640_SSP0_AIF2     BIT(21)
 
 static unsigned long byt_rt5640_quirk = BYT_RT5640_DMIC1_MAP |
 					BYT_RT5640_DMIC_EN;
@@ -52,21 +60,10 @@ static const struct snd_soc_dapm_widget byt_rt5640_widgets[] = {
 };
 
 static const struct snd_soc_dapm_route byt_rt5640_audio_map[] = {
-	{"AIF1 Playback", NULL, "ssp2 Tx"},
-	{"ssp2 Tx", NULL, "codec_out0"},
-	{"ssp2 Tx", NULL, "codec_out1"},
-	{"codec_in0", NULL, "ssp2 Rx"},
-	{"codec_in1", NULL, "ssp2 Rx"},
-	{"ssp2 Rx", NULL, "AIF1 Capture"},
-
 	{"Headset Mic", NULL, "MICBIAS1"},
 	{"IN2P", NULL, "Headset Mic"},
 	{"Headphone", NULL, "HPOL"},
 	{"Headphone", NULL, "HPOR"},
-	{"Speaker", NULL, "SPOLP"},
-	{"Speaker", NULL, "SPOLN"},
-	{"Speaker", NULL, "SPORP"},
-	{"Speaker", NULL, "SPORN"},
 };
 
 static const struct snd_soc_dapm_route byt_rt5640_intmic_dmic1_map[] = {
@@ -80,6 +77,54 @@ static const struct snd_soc_dapm_route byt_rt5640_intmic_dmic2_map[] = {
 static const struct snd_soc_dapm_route byt_rt5640_intmic_in1_map[] = {
 	{"Internal Mic", NULL, "MICBIAS1"},
 	{"IN1P", NULL, "Internal Mic"},
+};
+
+static const struct snd_soc_dapm_route byt_rt5640_ssp2_aif1_map[] = {
+	{"ssp2 Tx", NULL, "codec_out0"},
+	{"ssp2 Tx", NULL, "codec_out1"},
+	{"codec_in0", NULL, "ssp2 Rx"},
+	{"codec_in1", NULL, "ssp2 Rx"},
+
+	{"AIF1 Playback", NULL, "ssp2 Tx"},
+	{"ssp2 Rx", NULL, "AIF1 Capture"},
+};
+
+static const struct snd_soc_dapm_route byt_rt5640_ssp2_aif2_map[] = {
+	{"ssp2 Tx", NULL, "codec_out0"},
+	{"ssp2 Tx", NULL, "codec_out1"},
+	{"codec_in0", NULL, "ssp2 Rx"},
+	{"codec_in1", NULL, "ssp2 Rx"},
+
+	{"AIF2 Playback", NULL, "ssp2 Tx"},
+	{"ssp2 Rx", NULL, "AIF2 Capture"},
+};
+
+static const struct snd_soc_dapm_route byt_rt5640_ssp0_aif1_map[] = {
+	{"ssp0 Tx", NULL, "modem_out"},
+	{"modem_in", NULL, "ssp0 Rx"},
+
+	{"AIF1 Playback", NULL, "ssp0 Tx"},
+	{"ssp0 Rx", NULL, "AIF1 Capture"},
+};
+
+static const struct snd_soc_dapm_route byt_rt5640_ssp0_aif2_map[] = {
+	{"ssp0 Tx", NULL, "modem_out"},
+	{"modem_in", NULL, "ssp0 Rx"},
+
+	{"AIF2 Playback", NULL, "ssp0 Tx"},
+	{"ssp0 Rx", NULL, "AIF2 Capture"},
+};
+
+static const struct snd_soc_dapm_route byt_rt5640_stereo_spk_map[] = {
+	{"Speaker", NULL, "SPOLP"},
+	{"Speaker", NULL, "SPOLN"},
+	{"Speaker", NULL, "SPORP"},
+	{"Speaker", NULL, "SPORN"},
+};
+
+static const struct snd_soc_dapm_route byt_rt5640_mono_spk_map[] = {
+	{"Speaker", NULL, "SPOLP"},
+	{"Speaker", NULL, "SPOLN"},
 };
 
 static const struct snd_kcontrol_new byt_rt5640_controls[] = {
@@ -96,8 +141,6 @@ static int byt_rt5640_aif1_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	int ret;
 
-	snd_soc_dai_set_bclk_ratio(codec_dai, 50);
-
 	ret = snd_soc_dai_set_sysclk(codec_dai, RT5640_SCLK_S_PLL1,
 				     params_rate(params) * 512,
 				     SND_SOC_CLOCK_IN);
@@ -106,9 +149,18 @@ static int byt_rt5640_aif1_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 	}
 
+	if ((byt_rt5640_quirk & BYT_RT5640_SSP0_AIF1) ||
+		(byt_rt5640_quirk & BYT_RT5640_SSP0_AIF2)) {
+
+		ret = snd_soc_dai_set_pll(codec_dai, 0, RT5640_PLL1_S_BCLK1,
+					params_rate(params) * 32, /* FIXME */
+					params_rate(params) * 512);
+	} else {
 	ret = snd_soc_dai_set_pll(codec_dai, 0, RT5640_PLL1_S_BCLK1,
 				  params_rate(params) * 50,
 				  params_rate(params) * 512);
+	}
+
 	if (ret < 0) {
 		dev_err(rtd->dev, "can't set codec pll: %d\n", ret);
 		return ret;
@@ -127,16 +179,28 @@ static const struct dmi_system_id byt_rt5640_quirk_table[] = {
 	{
 		.callback = byt_rt5640_quirk_cb,
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "T100TA"),
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "T100TA"),
 		},
-		.driver_data = (unsigned long *)BYT_RT5640_IN1_MAP,
+		.driver_data = (unsigned long *)(BYT_RT5640_IN1_MAP |
+						BYT_RT5640_SSP0_AIF2)
 	},
 	{
 		.callback = byt_rt5640_quirk_cb,
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "DellInc."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Venue 8 Pro 5830"),
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "T100TAF"),
+		},
+		.driver_data = (unsigned long *)(BYT_RT5640_IN1_MAP |
+						 BYT_RT5640_MONO_SPEAKER |
+						 BYT_RT5640_DIFF_MIC
+						 ),
+	},
+	{
+		.callback = byt_rt5640_quirk_cb,
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "DellInc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Venue 8 Pro 5830"),
 		},
 		.driver_data = (unsigned long *)(BYT_RT5640_DMIC2_MAP |
 						 BYT_RT5640_DMIC_EN),
@@ -144,11 +208,29 @@ static const struct dmi_system_id byt_rt5640_quirk_table[] = {
 	{
 		.callback = byt_rt5640_quirk_cb,
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "HP ElitePad 1000 G2"),
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "HP ElitePad 1000 G2"),
 		},
 		.driver_data = (unsigned long *)BYT_RT5640_IN1_MAP,
 	},
+	{
+ 		.callback = byt_rt5640_quirk_cb,
+ 		.matches = {
+ 			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "YIFANG"),
+ 			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "NXW9QC132"),
+ 		},
+ 		.driver_data = (unsigned long *)(BYT_RT5640_DMIC2_MAP |
+						 BYT_RT5640_DMIC_EN),
+ 	}, 
+	{
+                .callback = byt_rt5640_quirk_cb,
+                .matches = {
+                        DMI_EXACT_MATCH(DMI_SYS_VENDOR, "YIFANG"),
+                        DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "NXW101QC232"),
+                },
+                .driver_data = (unsigned long *)(BYT_RT5640_DMIC2_MAP |
+                                                 BYT_RT5640_DMIC_EN),
+        },
 	{}
 };
 
@@ -192,6 +274,43 @@ static int byt_rt5640_init(struct snd_soc_pcm_runtime *runtime)
 	if (ret)
 		return ret;
 
+	if (byt_rt5640_quirk & BYT_RT5640_SSP2_AIF2) {
+		ret = snd_soc_dapm_add_routes(&card->dapm,
+					byt_rt5640_ssp2_aif2_map,
+					ARRAY_SIZE(byt_rt5640_ssp2_aif2_map));
+	} else if (byt_rt5640_quirk & BYT_RT5640_SSP0_AIF1) {
+		ret = snd_soc_dapm_add_routes(&card->dapm,
+					byt_rt5640_ssp0_aif1_map,
+					ARRAY_SIZE(byt_rt5640_ssp0_aif1_map));
+	} else if (byt_rt5640_quirk & BYT_RT5640_SSP0_AIF2) {
+		ret = snd_soc_dapm_add_routes(&card->dapm,
+					byt_rt5640_ssp0_aif2_map,
+					ARRAY_SIZE(byt_rt5640_ssp0_aif2_map));
+	} else {
+		ret = snd_soc_dapm_add_routes(&card->dapm,
+					byt_rt5640_ssp2_aif1_map,
+					ARRAY_SIZE(byt_rt5640_ssp2_aif1_map));
+	}
+	if (ret)
+		return ret;
+
+	if (byt_rt5640_quirk & BYT_RT5640_MONO_SPEAKER) {
+		ret = snd_soc_dapm_add_routes(&card->dapm,
+					byt_rt5640_mono_spk_map,
+					ARRAY_SIZE(byt_rt5640_mono_spk_map));
+	} else {
+		ret = snd_soc_dapm_add_routes(&card->dapm,
+					byt_rt5640_stereo_spk_map,
+					ARRAY_SIZE(byt_rt5640_stereo_spk_map));
+	}
+	if (ret)
+		return ret;
+
+	if (byt_rt5640_quirk & BYT_RT5640_DIFF_MIC) {
+		snd_soc_update_bits(codec,  RT5640_IN1_IN2, RT5640_IN_DF1, 
+				    RT5640_IN_DF1);
+	}
+
 	if (byt_rt5640_quirk & BYT_RT5640_DMIC_EN) {
 		ret = rt5640_dmic_enable(codec, 0, 0);
 		if (ret)
@@ -221,9 +340,38 @@ static int byt_rt5640_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 						SNDRV_PCM_HW_PARAM_CHANNELS);
 	int ret;
 
-	/* The DSP will covert the FE rate to 48k, stereo, 24bits */
+	/* The DSP will covert the FE rate to 48k, stereo */
 	rate->min = rate->max = 48000;
 	channels->min = channels->max = 2;
+
+	if ((byt_rt5640_quirk & BYT_RT5640_SSP0_AIF1) ||
+		(byt_rt5640_quirk & BYT_RT5640_SSP0_AIF2)) {
+
+		/* set SSP2 to 16-bit */
+		params_set_format(params, SNDRV_PCM_FORMAT_S16_LE);
+
+		/*
+		 * Default mode for SSP configuration is TDM 4 slot, override config
+		 * with explicit setting to I2S 2ch 16-bit. The word length is set with
+		 * dai_set_tdm_slot() since there is no other API exposed
+		 */
+		ret = snd_soc_dai_set_fmt(rtd->cpu_dai,
+					SND_SOC_DAIFMT_I2S     |
+					SND_SOC_DAIFMT_NB_IF   |
+					SND_SOC_DAIFMT_CBS_CFS
+			);
+		if (ret < 0) {
+			dev_err(rtd->dev, "can't set format to I2S, err %d\n", ret);
+			return ret;
+		}
+
+		ret = snd_soc_dai_set_tdm_slot(rtd->cpu_dai, 0x3, 0x3, 2, 16);
+		if (ret < 0) {
+			dev_err(rtd->dev, "can't set I2S config, err %d\n", ret);
+			return ret;
+		}
+
+	} else {
 
 	/* set SSP2 to 24-bit */
 	params_set_format(params, SNDRV_PCM_FORMAT_S24_LE);
@@ -248,7 +396,7 @@ static int byt_rt5640_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 		dev_err(rtd->dev, "can't set I2S config, err %d\n", ret);
 		return ret;
 	}
-
+	}
 	return 0;
 }
 
@@ -305,10 +453,10 @@ static struct snd_soc_dai_link byt_rt5640_dais[] = {
 	{
 		.name = "SSP2-Codec",
 		.id = 1,
-		.cpu_dai_name = "ssp2-port",
+		.cpu_dai_name = "ssp2-port", /* overwritten for ssp0 routing */
 		.platform_name = "sst-mfld-platform",
 		.no_pcm = 1,
-		.codec_dai_name = "rt5640-aif1",
+		.codec_dai_name = "rt5640-aif1", /* changed w/ quirk */
 		.codec_name = "i2c-10EC5640:00", /* overwritten with HID */
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
 						| SND_SOC_DAIFMT_CBS_CFS,
@@ -335,6 +483,20 @@ static struct snd_soc_card byt_rt5640_card = {
 };
 
 static char byt_rt5640_codec_name[16]; /* i2c-<HID>:00 with HID being 8 chars */
+static char byt_rt5640_codec_aif_name[12]; /*  = "rt5640-aif[1|2]" */
+static char byt_rt5640_cpu_dai_name[10]; /*  = "ssp[0|2]-port" */
+
+static bool is_valleyview(void)
+{
+	static const struct x86_cpu_id cpu_ids[] __initconst = {
+		{ X86_VENDOR_INTEL, 6, 55 }, /* Valleyview, Bay Trail */
+		{}
+	};
+
+	if (!x86_match_cpu(cpu_ids))
+		return false;
+	return true;
+}
 
 static int snd_byt_rt5640_mc_probe(struct platform_device *pdev)
 {
@@ -366,8 +528,45 @@ static int snd_byt_rt5640_mc_probe(struct platform_device *pdev)
 		byt_rt5640_dais[dai_index].codec_name = byt_rt5640_codec_name;
 	}
 
+	/*
+	 * swap SSP0 if bytcr is detected
+	 * (will be overridden if DMI quirk is detected)
+	 */
+	if (is_valleyview()) {
+		struct sst_platform_info *p_info = mach->pdata;
+		const struct sst_res_info *res_info = p_info->res_info;
+
+		if (res_info->acpi_ipc_irq_index == 0) {
+			byt_rt5640_quirk |= BYT_RT5640_SSP0_AIF1;
+		}
+	}
+
 	/* check quirks before creating card */
 	dmi_check_system(byt_rt5640_quirk_table);
+
+	if ((byt_rt5640_quirk & BYT_RT5640_SSP2_AIF2) ||
+	    (byt_rt5640_quirk & BYT_RT5640_SSP0_AIF2)) {
+
+		/* fixup codec aif name */
+		snprintf(byt_rt5640_codec_aif_name,
+			sizeof(byt_rt5640_codec_aif_name),
+			"%s", "rt5640-aif2");
+
+		byt_rt5640_dais[dai_index].codec_dai_name =
+			byt_rt5640_codec_aif_name;
+	}
+
+	if ((byt_rt5640_quirk & BYT_RT5640_SSP0_AIF1) ||
+	    (byt_rt5640_quirk & BYT_RT5640_SSP0_AIF2)) {
+
+		/* fixup cpu dai name name */
+		snprintf(byt_rt5640_cpu_dai_name,
+			sizeof(byt_rt5640_cpu_dai_name),
+			"%s", "ssp0-port");
+
+		byt_rt5640_dais[dai_index].cpu_dai_name =
+			byt_rt5640_cpu_dai_name;
+	}
 
 	ret_val = devm_snd_soc_register_card(&pdev->dev, &byt_rt5640_card);
 
