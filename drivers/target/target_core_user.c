@@ -446,7 +446,7 @@ static int tcmu_queue_cmd_ring(struct tcmu_cmd *tcmu_cmd)
 
 		pr_debug("sleeping for ring space\n");
 		spin_unlock_irq(&udev->cmdr_lock);
-		ret = schedule_msec_hrtimeout((TCMU_TIME_OUT));
+		ret = schedule_timeout(msecs_to_jiffies(TCMU_TIME_OUT));
 		finish_wait(&udev->wait_cmdr, &__wait);
 		if (!ret) {
 			pr_warn("tcmu: command timed out\n");
@@ -681,8 +681,6 @@ static int tcmu_check_expired_cmd(int id, void *p, void *data)
 	set_bit(TCMU_CMD_BIT_EXPIRED, &cmd->flags);
 	target_complete_cmd(cmd->se_cmd, SAM_STAT_CHECK_CONDITION);
 	cmd->se_cmd = NULL;
-
-	kmem_cache_free(tcmu_cmd_cache, cmd);
 
 	return 0;
 }

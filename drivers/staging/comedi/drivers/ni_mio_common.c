@@ -1832,7 +1832,7 @@ static int ni_ai_insn_read(struct comedi_device *dev,
 			   unsigned int *data)
 {
 	struct ni_private *devpriv = dev->private;
-	unsigned int mask = (s->maxdata + 1) >> 1;
+	unsigned int mask = s->maxdata;
 	int i, n;
 	unsigned int signbits;
 	unsigned int d;
@@ -1875,7 +1875,7 @@ static int ni_ai_insn_read(struct comedi_device *dev,
 				return -ETIME;
 			}
 			d += signbits;
-			data[n] = d;
+			data[n] = d & 0xffff;
 		}
 	} else if (devpriv->is_6143) {
 		for (n = 0; n < insn->n; n++) {
@@ -1924,9 +1924,8 @@ static int ni_ai_insn_read(struct comedi_device *dev,
 				data[n] = dl;
 			} else {
 				d = ni_readw(dev, NI_E_AI_FIFO_DATA_REG);
-				/* subtle: needs to be short addition */
 				d += signbits;
-				data[n] = d;
+				data[n] = d & 0xffff;
 			}
 		}
 	}
@@ -4611,7 +4610,7 @@ static int cs5529_wait_for_idle(struct comedi_device *dev)
 		if ((status & NI67XX_CAL_STATUS_BUSY) == 0)
 			break;
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (schedule_min_hrtimeout())
+		if (schedule_timeout(1))
 			return -EIO;
 	}
 	if (i == timeout) {

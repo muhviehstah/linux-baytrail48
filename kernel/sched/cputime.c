@@ -4,12 +4,7 @@
 #include <linux/kernel_stat.h>
 #include <linux/static_key.h>
 #include <linux/context_tracking.h>
-#ifdef CONFIG_SCHED_MUQSS
-#include "MuQSS.h"
-#include "stats.h"
-#else
 #include "sched.h"
-#endif
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>
 #endif
@@ -676,7 +671,7 @@ out:
 void task_cputime_adjusted(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
 	struct task_cputime cputime = {
-		.sum_exec_runtime = tsk_seruntime(p),
+		.sum_exec_runtime = p->se.sum_exec_runtime,
 	};
 
 	task_cputime(p, &cputime.utime, &cputime.stime);
